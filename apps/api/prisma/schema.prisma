@@ -1,0 +1,270 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MERCHANT
+}
+enum MerchantType {
+  INDIVIDUAL
+  COMPANY
+}
+enum KycStatus {
+  NOT_STARTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+enum WalletType {
+  HOSTED
+  SELF_HOSTED
+}
+enum WalletOwner {
+  SELF
+  THIRD_PARTY
+}
+enum WalletStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  DISABLED
+}
+enum PaymentStatus {
+  CREATED
+  PIX_PENDING
+  PIX_CONFIRMED
+  CONVERSION_PENDING
+  CRYPTO_CREDITED
+  COMMISSION_TRANSFER_PENDING
+  MERCHANT_PAYOUT_PENDING
+  PLATFORM_PAYOUT_PENDING
+  COMPLETED
+  FAILED
+  CANCELED
+  EXPIRED
+  UNDER_REVIEW
+}
+enum TransferKind {
+  MERCHANT_PAYOUT
+  PLATFORM_COMMISSION
+}
+enum TransferStatus {
+  CREATED
+  SUBMITTED
+  PENDING_TRAVEL_RULE
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+enum LedgerStatus {
+  PENDING
+  POSTED
+  REVERSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         UserRole @default(MERCHANT)
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  merchant     Merchant?
+  auditEvents  AuditEvent[]
+}
+
+model Merchant {
+  id                    String       @id @default(cuid())
+  userId                String       @unique
+  user                  User         @relation(fields: [userId], references: [id])
+  merchantType          MerchantType
+  legalName             String
+  taxIdEncrypted        String
+  taxIdLast4            String
+  phoneEncrypted        String?
+  foxbitSubMemberSn     String?      @unique
+  kycStatus             KycStatus    @default(NOT_STARTED)
+  isEnabled             Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  wallets               WalletDestination[]
+  payments              Payment[]
+  apiKeys               MerchantApiKey[]
+}
+
+model WalletDestination {
+  id                    String       @id @default(cuid())
+  merchantId            String
+  merchant              Merchant     @relation(fields: [merchantId], references: [id])
+  label                 String
+  exchangeName          String
+  networkCode           String
+  currencySymbol        String       @default("usdt")
+  addressEncrypted      String
+  addressLast8          String
+  tagEncrypted          String?
+  walletType            WalletType   @default(HOSTED)
+  walletOwner           WalletOwner  @default(SELF)
+  status                WalletStatus @default(PENDING_VERIFICATION)
+  holderName            String
+  holderTaxIdEncrypted  String?
+  holderCountry         String       @default("BR")
+  vaspEntityCountry     String?
+  isVerified            Boolean      @default(false)
+  isDefault             Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  payments              Payment[]
+  @@index([merchantId, isDefault])
+  @@index([merchantId, status])
+}
+
+
+model PlatformWallet {
+  id               String   @id @default(cuid())
+  networkCode      String   @unique
+  currencySymbol   String   @default("usdt")
+  addressEncrypted String
+  addressLast8     String
+  isEnabled        Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  externalId            String        @unique
+  merchantId            String
+  merchant              Merchant      @relation(fields: [merchantId], references: [id])
+  walletDestinationId   String
+  walletDestination     WalletDestination @relation(fields: [walletDestinationId], references: [id])
+  status                PaymentStatus @default(CREATED)
+  description           String?
+  amountBrlCents        BigInt
+  quoteId               String?
+  fxRate                Decimal?      @db.Decimal(28, 12)
+  providerGrossUsdt     Decimal?      @db.Decimal(28, 8)
+  providerFeesUsdt      Decimal?      @db.Decimal(28, 8)
+  commissionBps         Int           @default(200)
+  commissionUsdt        Decimal?      @db.Decimal(28, 8)
+  merchantNetUsdt       Decimal?      @db.Decimal(28, 8)
+  providerOrderId       String?       @unique
+  providerTransactionId String?
+  pixCopyPaste          String?
+  payerName             String?
+  payerTaxIdEncrypted   String?
+  payerTaxIdLast4       String?
+  payerEmailEncrypted   String?
+  payerPhoneEncrypted   String?
+  payerEndToEndId       String?
+  pixQrCodeBase64       String?
+  expiresAt             DateTime?
+  paidAt                DateTime?
+  completedAt           DateTime?
+  failureCode           String?
+  failureMessage        String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  transfers             Transfer[]
+  ledgerEntries         LedgerEntry[]
+  @@index([merchantId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Transfer {
+  id                       String         @id @default(cuid())
+  paymentId                String
+  payment                  Payment        @relation(fields: [paymentId], references: [id])
+  kind                     TransferKind
+  status                   TransferStatus @default(CREATED)
+  amountUsdt               Decimal        @db.Decimal(28, 8)
+  networkCode              String
+  destinationAddressEnc    String
+  providerWithdrawalSn     String?        @unique
+  txHash                   String?
+  idempotencyKey            String         @unique
+  failureCode               String?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+  @@index([paymentId, kind])
+  @@index([status, createdAt])
+}
+
+model MerchantApiKey {
+  id           String   @id @default(cuid())
+  merchantId   String
+  merchant     Merchant @relation(fields: [merchantId], references: [id])
+  name         String
+  prefix       String
+  keyHash      String   @unique
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+  @@index([merchantId, revokedAt])
+}
+
+model WebhookEvent {
+  id               String   @id @default(cuid())
+  provider         String
+  providerEventId  String?
+  eventType        String
+  payloadEncrypted String
+  signatureValid   Boolean
+  processedAt      DateTime?
+  receivedAt       DateTime @default(now())
+  @@unique([provider, providerEventId])
+  @@index([provider, eventType, receivedAt])
+}
+
+model LedgerEntry {
+  id          String         @id @default(cuid())
+  paymentId   String
+  payment     Payment        @relation(fields: [paymentId], references: [id])
+  accountCode String
+  asset       String
+  direction   LedgerDirection
+  amount      Decimal        @db.Decimal(28, 8)
+  status      LedgerStatus   @default(PENDING)
+  reference   String         @unique
+  createdAt   DateTime       @default(now())
+  @@index([paymentId, accountCode])
+}
+
+model IdempotencyRecord {
+  id           String   @id @default(cuid())
+  scope        String
+  key          String
+  requestHash  String
+  responseJson Json?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime?
+  @@unique([scope, key])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String
+  ipAddress   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  @@index([entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+}
