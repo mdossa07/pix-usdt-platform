@@ -14,6 +14,7 @@ import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook } from './providers/foxbit/foxbit-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
+import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -275,6 +276,48 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   }
   request.log.info({ eventType, eventId }, 'Foxbit webhook verified and persisted');
   return reply.code(202).send({ accepted: true, processed: isPixConfirmed });
+});
+
+// --- Merchant API Key Management (JWT Auth) ---
+app.post('/v1/merchant/api-keys', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const body = request.body as { name?: string } | undefined;
+  const name = typeof body?.name === 'string' && body.name.trim() ? body.name.trim() : 'default';
+  const result = await generateMerchantApiKey(merchant.id, name);
+  await audit(request, 'API_KEY_CREATED', 'MERCHANT_API_KEY', result.keyId, { prefix: result.prefix });
+  return reply.code(201).send({
+    keyId: result.keyId,
+    prefix: result.prefix,
+    secret: result.secret,
+    warning: 'Store this secret securely. It will not be shown again.',
+  });
+});
+
+app.get('/v1/merchant/api-keys', { preHandler: [app.authenticate] }, async (request) => {
+  const merchant = await merchantFor(request);
+  const keys = await prisma.merchantApiKey.findMany({
+    where: { merchantId: merchant.id },
+    select: { id: true, name: true, prefix: true, createdAt: true, lastUsedAt: true, revokedAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { keys };
+});
+
+app.delete('/v1/merchant/api-keys/:keyId', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const { keyId } = request.params as { keyId: string };
+  const key = await prisma.merchantApiKey.findFirst({ where: { id: keyId, merchantId: merchant.id, revokedAt: null } });
+  if (!key) return reply.code(404).send({ error: 'api_key_not_found' });
+  await prisma.merchantApiKey.update({ where: { id: keyId }, data: { revokedAt: new Date() } });
+  await audit(request, 'API_KEY_REVOKED', 'MERCHANT_API_KEY', keyId, { prefix: key.prefix });
+  return { success: true, revoked: true };
+});
+
+// --- Protected Merchant Endpoint Example (HMAC Auth) ---
+app.post('/v1/payments', { preHandler: [hmacAuthMiddleware] }, async (request, reply) => {
+  // Placeholder: criação real de pagamento via API pública do merchant
+  // A autenticação HMAC já validou a identidade do merchant em request.merchant
+  return reply.code(501).send({ error: 'not_implemented', message: 'Use /v1/checkout/create for now. HMAC auth validated successfully.' });
 });
 
 app.setErrorHandler((error, request, reply) => {
