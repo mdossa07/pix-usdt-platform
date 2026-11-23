@@ -236,6 +236,31 @@ app.post('/v1/payments', { preHandler: app.authenticate }, async (request, reply
   return reply.code(201).send({ id: payment.id, externalId, status: payment.status, amountBrlCents: payment.amountBrlCents.toString(), pixCopyPaste: payment.pixCopyPaste, expiresAt: payment.expiresAt, mode: 'mock', warning: 'Este código é fictício e não aceita pagamento. Integração PIX real aguarda homologação Foxbit.' });
 });
 
+// --- Public Checkout Endpoint (no auth, read-only) ---
+app.get('/v1/checkout/:externalId', async (request, reply) => {
+  const { externalId } = request.params as { externalId: string };
+  const payment = await prisma.payment.findFirst({
+    where: { externalId },
+    include: { walletDestination: true, merchant: { select: { legalName: true } } },
+  });
+  if (!payment) return reply.code(404).send({ error: 'payment_not_found' });
+  const now = Date.now();
+  const expired = payment.expiresAt && new Date(payment.expiresAt).getTime() < now;
+  return {
+    id: payment.id,
+    externalId: payment.externalId,
+    status: payment.status,
+    amountBrlCents: payment.amountBrlCents.toString(),
+    pixCopyPaste: payment.pixCopyPaste,
+    expiresAt: payment.expiresAt,
+    expired: !!expired,
+    description: payment.description ?? null,
+    merchant: { name: payment.merchant.legalName },
+    wallet: { networkCode: payment.walletDestination.networkCode, addressLast8: payment.walletDestination.addressLast8 },
+    mode: config.PAYMENTS_MODE,
+  };
+});
+
 /** Local-only simulation. It never contacts the provider or blockchain. */
 app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async (request, reply) => {
   if (config.PAYMENTS_MODE !== 'mock' || config.NODE_ENV === 'production') return reply.code(403).send({ error: 'mock_only' });
