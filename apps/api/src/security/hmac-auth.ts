@@ -82,7 +82,8 @@ export async function hmacAuthMiddleware(
   // O fluxo real seria: merchant envia secret -> server deriva signing key -> valida HMAC.
   // Aqui simplificamos: o keyHash armazena HMAC-SHA256 do corpo esperado para testes.
   
-  const rawBody = request.body ? JSON.stringify(request.body) : '';
+  const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
+  const rawBody = raw ? raw.toString('utf8') : '';
   const path = request.url.split('?')[0] || '/';
   const signingString = buildSigningString(request.method, path, String(timestamp), rawBody);
   
@@ -150,13 +151,14 @@ export async function generateMerchantApiKey(
  */
 export function signRequest(
   secret: string,
+  merchantId: string,
   method: string,
   path: string,
   timestamp: number,
-  body?: unknown,
+  rawBody: string,
 ): string {
-  const rawBody = body ? JSON.stringify(body) : '';
   const signingString = buildSigningString(method, path, String(timestamp), rawBody);
-  const derivedKey = createHmac('sha256', secret).update('signing').digest();
+  const keyHash = createHmac('sha256', secret).digest('hex');
+  const derivedKey = createHmac('sha256', keyHash).update(merchantId).digest();
   return createHmac('sha256', derivedKey).update(signingString).digest('hex');
 }

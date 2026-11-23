@@ -339,7 +339,7 @@ app.delete('/v1/merchant/api-keys/:keyId', { preHandler: [app.authenticate] }, a
 });
 
 // --- Protected Merchant Endpoint Example (HMAC Auth) ---
-app.post('/v1/payments', { preHandler: [hmacAuthMiddleware] }, async (request, reply) => {
+app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
   // Placeholder: criação real de pagamento via API pública do merchant
   // A autenticação HMAC já validou a identidade do merchant em request.merchant
   return reply.code(501).send({ error: 'not_implemented', message: 'Use /v1/checkout/create for now. HMAC auth validated successfully.' });

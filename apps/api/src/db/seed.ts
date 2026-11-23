@@ -114,8 +114,9 @@ async function main() {
   console.log(`✅ ${payments.length} sample payments created`);
 
   console.log('\n🎉 Seed completed successfully!');
-  console.log('   Admin: admin@pixsplit.dev / admin123');
-  console.log('   Merchant: demo@merchant.com / merchant123');
+  console.log('   Admin: admin@pixsplit.dev / ***');
+  console.log('   Merchant: demo@merchant.com / ***');
+  console.log('   Senhas definidas no script; consulte README ou .env.example para credenciais de dev.');
 }
 
 main()
