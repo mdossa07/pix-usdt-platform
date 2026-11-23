@@ -12,6 +12,8 @@ import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook } from './providers/foxbit/foxbit-webhook.js';
+import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
+import { enqueueSettlement, closeQueues } from './queues/producers.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -238,33 +240,14 @@ app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async
   if (config.PAYMENTS_MODE !== 'mock' || config.NODE_ENV === 'production') return reply.code(403).send({ error: 'mock_only' });
   const merchant = await merchantFor(request);
   const { id } = request.params as { id: string };
-  const payment = await prisma.payment.findFirst({ where: { id, merchantId: merchant.id }, include: { walletDestination: true } });
+  const payment = await prisma.payment.findFirst({ where: { id, merchantId: merchant.id } });
   if (!payment) return reply.code(404).send({ error: 'payment_not_found' });
   if (payment.status === PaymentStatus.COMPLETED) return { success: true, status: 'already_completed', mock: true };
   if (payment.status !== PaymentStatus.PIX_PENDING) return reply.code(409).send({ error: 'payment_not_pending' });
-  const grossUsdt = mockBrlToUsdt(payment.amountBrlCents, config.MOCK_USDT_PER_BRL);
-  const split = calculateUsdtSplit(grossUsdt, payment.commissionBps, 6);
-  const platformWallet = await prisma.platformWallet.findUnique({ where: { networkCode: payment.walletDestination.networkCode } });
-  const commissionAddressEncrypted = platformWallet?.addressEncrypted ?? encryptPii('MOCK-PLATFORM-WALLET');
-  const now = new Date();
-  await prisma.$transaction(async tx => {
-    await tx.payment.update({ where: { id }, data: {
-      status: PaymentStatus.COMPLETED, providerGrossUsdt: grossUsdt, providerFeesUsdt: '0',
-      commissionUsdt: split.commissionUsdt, merchantNetUsdt: split.merchantUsdt,
-      fxRate: config.MOCK_USDT_PER_BRL, paidAt: now, completedAt: now,
-    } });
-    await tx.transfer.createMany({ data: [
-      { paymentId: id, kind: TransferKind.MERCHANT_PAYOUT, status: TransferStatus.COMPLETED, amountUsdt: split.merchantUsdt, networkCode: payment.walletDestination.networkCode, destinationAddressEnc: payment.walletDestination.addressEncrypted, idempotencyKey: `${payment.externalId}:merchant:mock`, txHash: `MOCK-MERCHANT-${payment.externalId}` },
-      { paymentId: id, kind: TransferKind.PLATFORM_COMMISSION, status: TransferStatus.COMPLETED, amountUsdt: split.commissionUsdt, networkCode: payment.walletDestination.networkCode, destinationAddressEnc: commissionAddressEncrypted, idempotencyKey: `${payment.externalId}:platform:mock`, txHash: `MOCK-COMMISSION-${payment.externalId}` },
-    ] });
-    await tx.ledgerEntry.createMany({ data: [
-      { paymentId: id, accountCode: 'MOCK_CLEARING', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: grossUsdt, status: LedgerStatus.POSTED, reference: `${payment.externalId}:clearing:credit` },
-      { paymentId: id, accountCode: 'MERCHANT_PAYOUT', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.merchantUsdt, status: LedgerStatus.POSTED, reference: `${payment.externalId}:merchant:debit` },
-      { paymentId: id, accountCode: 'PLATFORM_COMMISSION', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.commissionUsdt, status: LedgerStatus.POSTED, reference: `${payment.externalId}:commission:debit` },
-    ] });
-    await tx.auditEvent.create({ data: { actorUserId: userId(request), action: 'PAYMENT_SETTLED_MOCK', entityType: 'PAYMENT', entityId: id, ipAddress: request.ip, metadata: { grossUsdt, commissionUsdt: split.commissionUsdt, merchantUsdt: split.merchantUsdt } } });
-  });
-  return { success: true, mock: true, status: 'COMPLETED', split, warning: 'Liquidação simulada; nenhum PIX, USDT ou transferência real foi executado.' };
+  // Enqueue async settlement instead of inline mock processing
+  await enqueueSettlement(id, payment.amountBrlCents);
+  await audit(request, 'PAYMENT_SETTLEMENT_ENQUEUED', 'PAYMENT', id, { mode: 'mock' });
+  return { success: true, mock: true, status: 'ENQUEUED', message: 'Liquidação assíncrona enfileirada; processe via worker.' };
 });
 
 app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, reply) => {
@@ -281,8 +264,17 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(200).send({ accepted: true, duplicate: true });
     throw error;
   }
-  request.log.info({ eventType, eventId }, 'Foxbit webhook verified and persisted; not processed until provider schema is approved');
-  return reply.code(202).send({ accepted: true, processed: false });
+  // If this is a PIX confirmation event, enqueue async settlement
+  const isPixConfirmed = eventType === 'PIX_RECEIVED' || eventType === 'PAYMENT_CONFIRMED';
+  if (isPixConfirmed && typeof event.external_id === 'string') {
+    const payment = await prisma.payment.findFirst({ where: { externalId: event.external_id } });
+    if (payment && payment.status === PaymentStatus.PIX_PENDING) {
+      await enqueueSettlement(payment.id, payment.amountBrlCents);
+      request.log.info({ paymentId: payment.id, eventType }, 'Webhook triggered async settlement');
+    }
+  }
+  request.log.info({ eventType, eventId }, 'Foxbit webhook verified and persisted');
+  return reply.code(202).send({ accepted: true, processed: isPixConfirmed });
 });
 
 app.setErrorHandler((error, request, reply) => {
@@ -292,7 +284,18 @@ app.setErrorHandler((error, request, reply) => {
   reply.code(status).send({ error: status >= 500 ? 'internal_server_error' : err.message, requestId: request.id });
 });
 
-const shutdown = async () => { await app.close(); await prisma.$disconnect(); process.exit(0); };
+// Start async workers for payment settlement and transfer retries
+const settlementWorker = startSettlementWorker();
+const retryWorker = startRetryWorker();
+
+const shutdown = async () => {
+  await settlementWorker.close();
+  await retryWorker.close();
+  await closeQueues();
+  await app.close();
+  await prisma.$disconnect();
+  process.exit(0);
+};
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 await app.listen({ host: '0.0.0.0', port: config.API_PORT });

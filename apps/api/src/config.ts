@@ -18,6 +18,7 @@ const schema = z.object({
   FOXBIT_WEBHOOK_SECRET: z.string().optional().default(''),
   PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(1).max(1000).default(200),
   MOCK_USDT_PER_BRL: z.string().regex(/^\d+(\.\d{1,6})?$/).default('0.180000'),
+  REDIS_URL: z.string().url().default('redis://localhost:6379'),
 });
 
 export const config = schema.parse(process.env);

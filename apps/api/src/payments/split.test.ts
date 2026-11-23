@@ -20,7 +20,8 @@ test('rounds commission down to token precision and keeps totals balanced', () =
   const result = calculateUsdtSplit('0.000099', 200);
   assert.equal(result.commissionUsdt, '0.000001');
   assert.equal(result.merchantUsdt, '0.000098');
-  assert.equal(result.commissionUsdt, formatAdd(result.totalUsdt, result.merchantUsdt));
+  // Conservation check: merchant + commission must equal total (not commission == total+merchant)
+  assert.equal(result.totalUsdt, formatAdd(result.commissionUsdt, result.merchantUsdt));
 });
 
 function formatAdd(a: string, b: string): string {
