@@ -140,7 +140,7 @@ export class PaymentOrchestrator {
     }
 
     const currentAttempt = existing;
-    if (currentAttempt?.providerWithdrawalSn) {
+    if (currentAttempt && (currentAttempt.providerWithdrawalSn || currentAttempt.status === TransferStatus.SUBMITTED)) {
       if (!this.provider.getTransferStatus) {
         await this.prisma.payment.update({
           where: { id: paymentId },
@@ -185,28 +185,34 @@ export class PaymentOrchestrator {
             });
           });
           return;
-        } else if (remoteStatus === null && currentAttempt.status !== TransferStatus.FAILED) {
-          // A provider 404 means this known reference was not created there.
-          // Reuse the same idempotency reference after resetting the local claim.
-          await this.prisma.transfer.update({
-            where: { id: currentAttempt.id },
-            data: { status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null },
+        } else if (remoteStatus === null) {
+          // A missing order is not proof that the provider did not accept the
+          // request (eventual consistency/network ambiguity). Keep the claim.
+          await this.prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+              status: PaymentStatus.UNDER_REVIEW,
+              failureCode: 'MERCHANT_PAYOUT_NOT_FOUND_BY_PARTNER_ID',
+              failureMessage: 'The provider could not yet locate this payout by its original partnerId. No automatic resubmission is allowed.',
+            },
           });
-          existing = { ...currentAttempt, status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null };
+          return;
         }
       } catch {
         // A failed status lookup is ambiguous. Never submit another payout.
         return;
       }
-    } else if (currentAttempt && currentAttempt.status !== TransferStatus.CREATED) {
-      // A previous worker claimed the payout but did not persist a provider ID.
-      // Its outcome is unknown; stop for manual/provider-side reconciliation.
+    } else if (
+      currentAttempt
+      && currentAttempt.status !== TransferStatus.CREATED
+      && currentAttempt.status !== TransferStatus.FAILED
+    ) {
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: {
           status: PaymentStatus.UNDER_REVIEW,
           failureCode: 'MERCHANT_PAYOUT_REFERENCE_MISSING',
-          failureMessage: 'A payout attempt was claimed but no provider reference was stored. Manual provider reconciliation is required before retrying.',
+          failureMessage: 'The payout reference is missing and its attempt cannot be safely queried. Manual reconciliation is required.',
         },
       });
       return;
@@ -383,23 +389,31 @@ export class PaymentOrchestrator {
             });
           });
           return;
-        } else if (remoteStatus === null && currentAttempt.status !== TransferStatus.FAILED) {
-          await this.prisma.transfer.update({
-            where: { id: currentAttempt.id },
-            data: { status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null },
+        } else if (remoteStatus === null) {
+          await this.prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+              status: PaymentStatus.UNDER_REVIEW,
+              failureCode: 'PLATFORM_PAYOUT_NOT_FOUND_BY_PARTNER_ID',
+              failureMessage: 'The provider could not yet locate this payout by its original partnerId. No automatic resubmission is allowed.',
+            },
           });
-          existing = { ...currentAttempt, status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null };
+          return;
         }
       } catch {
         return;
       }
-    } else if (currentAttempt && currentAttempt.status !== TransferStatus.CREATED) {
+    } else if (
+      currentAttempt
+      && currentAttempt.status !== TransferStatus.CREATED
+      && currentAttempt.status !== TransferStatus.FAILED
+    ) {
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: {
           status: PaymentStatus.UNDER_REVIEW,
           failureCode: 'PLATFORM_PAYOUT_REFERENCE_MISSING',
-          failureMessage: 'A platform payout attempt was claimed but no provider reference was stored. Manual provider reconciliation is required before retrying.',
+          failureMessage: 'The platform payout reference is missing and its attempt cannot be safely queried. Manual reconciliation is required.',
         },
       });
       return;
