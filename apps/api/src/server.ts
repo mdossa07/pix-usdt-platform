@@ -530,22 +530,95 @@ app.get('/v1/merchant/history/export', { preHandler: [app.authenticate] }, async
 app.get('/v1/admin/merchants', { preHandler: [app.authenticate] }, async (request, reply) => {
   const user = (request as any).user;
   if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
-  const merchants = await prisma.merchant.findMany({
-    select: { id: true, legalName: true, kycStatus: true, createdAt: true, user: { select: { email: true, isActive: true } } },
+  const [merchants, paymentTotals] = await Promise.all([
+    prisma.merchant.findMany({
+      include: { user: { select: { email: true } }, _count: { select: { payments: true } } },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.payment.groupBy({
+      by: ['merchantId'],
+      _sum: { amountBrlCents: true },
+    }),
+  ]);
+  const volumeByMerchant = new Map(paymentTotals.map(item => [item.merchantId, item._sum.amountBrlCents ?? 0n]));
+  return merchants.map(merchant => ({
+    id: merchant.id,
+    legalName: merchant.legalName,
+    email: merchant.user.email,
+    isEnabled: merchant.isEnabled,
+    kycStatus: merchant.kycStatus,
+    paymentsCount: merchant._count.payments,
+    totalVolumeBrlCents: (volumeByMerchant.get(merchant.id) ?? 0n).toString(),
+  }));
+});
+
+
+// --- Admin: payments list for reconciliation and audit ---
+app.get('/v1/admin/payments', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const payments = await prisma.payment.findMany({
+    include: { walletDestination: true, transfers: true },
     orderBy: { createdAt: 'desc' },
+    take: 500,
   });
-  return merchants;
+  return payments.map(payment => ({
+    id: payment.id,
+    externalId: payment.externalId,
+    status: payment.status,
+    amountBrlCents: payment.amountBrlCents.toString(),
+    commissionUsdt: payment.commissionUsdt?.toString() ?? null,
+    merchantNetUsdt: payment.merchantNetUsdt?.toString() ?? null,
+    merchantTransferStatus: payment.merchantTransferStatus,
+    platformTransferStatus: payment.platformTransferStatus,
+    createdAt: payment.createdAt,
+    wallet: {
+      label: payment.walletDestination.label,
+      exchangeName: payment.walletDestination.exchangeName,
+      networkCode: payment.walletDestination.networkCode,
+      addressLast8: payment.walletDestination.addressLast8,
+    },
+    transfers: payment.transfers.map(transfer => ({
+      kind: transfer.kind,
+      status: transfer.status,
+      amountUsdt: transfer.amountUsdt.toString(),
+      txHash: transfer.txHash,
+    })),
+  }));
 });
 
 // --- Admin: Audit Logs ---
 app.get('/v1/admin/audit', { preHandler: [app.authenticate] }, async (request, reply) => {
-  const user = (request as any).user;
-  if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const logs = await prisma.auditEvent.findMany({
+    include: { actor: { select: { email: true } } },
     orderBy: { createdAt: 'desc' },
     take: 200,
   });
-  return logs;
+  return logs.map(log => ({
+    id: log.id,
+    action: log.action,
+    entityType: log.entityType,
+    entityId: log.entityId,
+    actorEmail: log.actor?.email ?? null,
+    metadata: log.metadata,
+    createdAt: log.createdAt,
+  }));
+});
+
+// --- Admin: enable/disable merchants with KYC enforcement ---
+app.patch('/v1/admin/merchants/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const parsed = z.object({ isEnabled: z.boolean() }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_merchant_update' });
+  const { id } = request.params as { id: string };
+  const merchant = await prisma.merchant.findUnique({ where: { id } });
+  if (!merchant) return reply.code(404).send({ error: 'merchant_not_found' });
+  if (parsed.data.isEnabled && merchant.kycStatus !== 'APPROVED') {
+    return reply.code(409).send({ error: 'kyc_approval_required', message: 'O comerciante só pode ser ativado após aprovação KYC.' });
+  }
+  const updated = await prisma.merchant.update({ where: { id }, data: { isEnabled: parsed.data.isEnabled } });
+  await audit(request, parsed.data.isEnabled ? 'MERCHANT_ENABLED' : 'MERCHANT_DISABLED', 'MERCHANT', id, { kycStatus: updated.kycStatus });
+  return { id: updated.id, isEnabled: updated.isEnabled, kycStatus: updated.kycStatus };
 });
 
 // --- Admin: Retry Failed Payment ---

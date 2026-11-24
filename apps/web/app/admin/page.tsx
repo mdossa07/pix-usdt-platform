@@ -48,10 +48,13 @@ export default function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('pixsplit_token') : null;
 
   useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      window.location.replace('/login');
+      return;
+    }
     setLoading(true);
     Promise.all([
       apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
@@ -67,7 +70,7 @@ export default function AdminDashboard() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  if (!token) return <div className="text-red-700 p-8">Acesso negado. Faça login como administrador.</div>;
+  if (!token) return <div className="text-slate-500 p-8">Redirecionando para o acesso seguro…</div>;
   if (error) return <div className="text-red-700 p-8">{error}</div>;
   if (loading) return <div className="text-slate-500 p-8">Carregando painel administrativo...</div>;
 
