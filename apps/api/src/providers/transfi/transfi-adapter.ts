@@ -230,7 +230,7 @@ export class TransFiAdapter implements PaymentProvider {
       return {
         status: this.mapOrderStatus(response.data.status),
         txHash: response.data.txHash,
-        providerReference: providerTransferId,
+        providerReference: providerTransferId || idempotencyKey,
       };
     } catch (error) {
       if (error && typeof error === 'object' && 'status' in error && (error as { status: number }).status === 404) {
