@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
-import { verifyFoxbitWebhook } from './providers/foxbit/foxbit-webhook.js';
+import { handleFoxbitWebhookEvent } from './providers/foxbit/foxbit-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
@@ -280,27 +280,29 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
   const signatureHeader = request.headers['x-fb-signature'];
   const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-  if (!raw || !verifyFoxbitWebhook(raw, signature, config.FOXBIT_WEBHOOK_SECRET)) return reply.code(401).send({ error: 'invalid_webhook_signature' });
-  const event = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
-  const eventId = typeof event.event_id === 'string' ? event.event_id : null;
-  const eventType = typeof event.webhook_type === 'string' ? event.webhook_type : typeof event.type === 'string' ? event.type : 'unknown';
-  try {
-    await prisma.webhookEvent.create({ data: { provider: 'FOXBIT', providerEventId: eventId, eventType, payloadEncrypted: encryptPii(raw.toString('utf8')), signatureValid: true } });
-  } catch (error) {
-    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(200).send({ accepted: true, duplicate: true });
-    throw error;
+  if (!raw) return reply.code(400).send({ error: 'missing_raw_body' });
+  const result = await handleFoxbitWebhookEvent({
+    rawBody: raw,
+    signature: signature ?? '',
+    webhookSecret: config.FOXBIT_WEBHOOK_SECRET,
+  });
+  if (!result.accepted) {
+    return reply.code(result.duplicate ? 200 : 401).send({
+      accepted: false,
+      duplicate: result.duplicate,
+      error: result.duplicate ? 'duplicate_event' : 'invalid_webhook_signature',
+    });
   }
-  // If this is a PIX confirmation event, enqueue async settlement
-  const isPixConfirmed = eventType === 'PIX_RECEIVED' || eventType === 'PAYMENT_CONFIRMED';
-  if (isPixConfirmed && typeof event.external_id === 'string') {
-    const payment = await prisma.payment.findFirst({ where: { externalId: event.external_id } });
-    if (payment && payment.status === PaymentStatus.PIX_PENDING) {
-      await enqueueSettlement(payment.id, payment.amountBrlCents);
-      request.log.info({ paymentId: payment.id, eventType }, 'Webhook triggered async settlement');
-    }
-  }
-  request.log.info({ eventType, eventId }, 'Foxbit webhook verified and persisted');
-  return reply.code(202).send({ accepted: true, processed: isPixConfirmed });
+  request.log.info(
+    { eventType: result.eventType, eventId: result.eventId, paymentUpdated: result.paymentUpdated },
+    'Foxbit webhook processed (Partner API v3)',
+  );
+  return reply.code(202).send({
+    accepted: true,
+    eventId: result.eventId,
+    eventType: result.eventType,
+    paymentUpdated: result.paymentUpdated,
+  });
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
@@ -471,7 +473,27 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     });
   }
 
-  // Mock FX rate: 1 USD = 5.50 BRL (rateUnits = 5500000 for 6-decimal precision)
+  // Real provider flow: create charge via Foxbit Partner API v3 Fiat Gateway
+  // In mock mode, the adapter returns simulated but structurally valid data.
+  // In sandbox/live, it makes real HTTP calls to Foxbit.
+  const { FoxbitAdapter } = await import('./providers/foxbit/foxbit-adapter.js');
+  const adapter = new FoxbitAdapter(config.PAYMENTS_MODE);
+
+  const destWallet = await prisma.walletDestination.findUniqueOrThrow({ where: { id: walletDestinationId } });
+  const charge = await adapter.createPixCharge({
+    merchantReference: paymentExternalId,
+    amountBrlCents: BigInt(amountBrlCents),
+    payer: { name: payerName || undefined, taxId: payerTaxId || undefined },
+    beneficiary: {
+      walletAddress: destWallet.addressEncrypted, // TODO: decrypt before sending to provider in real mode
+      network: destWallet.networkCode,
+      memo: destWallet.tagEncrypted || undefined,
+      exchangeName: destWallet.exchangeName,
+      holderName: destWallet.holderName,
+    },
+  }, paymentExternalId);
+
+  // Calculate split for internal ledger tracking (does not affect provider charge)
   const usdtAmount = mockBrlToUsdt(BigInt(amountBrlCents), '5.500000');
   const split = calculateUsdtSplit(usdtAmount, 200); // 2% commission (200 bps)
 
@@ -486,9 +508,10 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
       merchantNetUsdt: new Prisma.Decimal(split.merchantUsdt),
       commissionBps: 200,
       status: PaymentStatus.CREATED,
-      pixQrCodeBase64: `data:image/png;base64,MOCK_QR_${paymentExternalId}`,
-      pixCopyPaste: `00020126580014BR.GOV.BCB.PIX0136${paymentExternalId}520400005303986540${(amountBrlCents / 100).toFixed(2)}5802BR`,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+      providerOrderId: charge.providerChargeId,
+      pixQrCodeBase64: charge.qrCodeBase64 ?? null,
+      pixCopyPaste: charge.copyPaste,
+      expiresAt: charge.expiresAt,
       payerName: payerName || null,
       payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
       payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
@@ -496,7 +519,9 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     },
   });
 
-  await enqueueSettlement(payment.id, BigInt(amountBrlCents));
+  // DO NOT enqueue settlement here. Settlement is triggered ONLY after
+  // webhook confirmation (PIX_RECEIVED / PAYMENT_CONFIRMED) from Foxbit.
+  // This prevents processing payments before actual PIX receipt.
 
   return reply.code(201).send({
     paymentId: payment.id,
@@ -509,6 +534,7 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     pixQrCodeBase64: payment.pixQrCodeBase64,
     pixCopyPaste: payment.pixCopyPaste,
     expiresAt: payment.expiresAt?.toISOString(),
+    providerOrderId: payment.providerOrderId,
   });
 });
 

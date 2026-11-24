@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { PrismaClient, PaymentStatus, TransferStatus, TransferKind } from '@prisma/client';
 import { PaymentOrchestrator } from './orchestrator.js';
 import { parseTokenUnits } from './split.js';
+import { encryptPii } from '../security/crypto.js';
 import type { PaymentProvider, SettlementLeg, TransferStatusResult } from '../providers/provider-contract.js';
 
 /**
@@ -132,7 +133,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
         label: 'Main Wallet',
         exchangeName: 'Foxbit',
         networkCode: 'TRON',
-        addressEncrypted: 'enc:T9yD14Nj9j7xAB4dbGeiX9h8bNzyBvL3Qz',
+        addressEncrypted: encryptPii('T9yD14Nj9j7xAB4dbGeiX9h8bNzyBvL3Qz'),
         addressLast8: 'BvL3Qz',
         holderName: 'Test Merchant LTDA',
         walletType: 'HOSTED',
@@ -147,7 +148,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
       data: {
         id: 'plat-wallet-1',
         networkCode: 'TRON',
-        addressEncrypted: 'enc:TPlatformWalletAddress123456789abcdef',
+        addressEncrypted: encryptPii('TPlatformWalletAddress123456789abcdef'),
         addressLast8: '9abcdef',
         isEnabled: true,
       },

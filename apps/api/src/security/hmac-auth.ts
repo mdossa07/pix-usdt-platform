@@ -20,6 +20,11 @@ const TIMESTAMP_HEADER = 'x-pixsplit-timestamp';
 const KEY_ID_HEADER = 'x-pixsplit-key-id';
 const MAX_SKEW_MS = 5 * 60 * 1000; // 5 minutos
 
+/**
+ * Canonical signing string format:
+ * METHOD\nPATH\nTIMESTAMP\nBODY
+ * Body is the exact raw bytes received (no re-serialization).
+ */
 function buildSigningString(
   method: string,
   path: string,
@@ -36,6 +41,14 @@ function safeCompare(a: Buffer, b: Buffer): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Derive the signing key from the stored hash and merchant ID.
+ * This matches the derivation in generateMerchantApiKey and signRequest.
+ */
+function deriveSigningKey(keyHash: string, merchantId: string): Buffer {
+  return createHmac('sha256', keyHash).update(merchantId).digest();
 }
 
 export async function hmacAuthMiddleware(
@@ -63,9 +76,10 @@ export async function hmacAuthMiddleware(
     return;
   }
 
+  // Lookup by full keyId (UUID), not prefix. Prefix is only for display/identification.
   const apiKey = await prisma.merchantApiKey.findFirst({
     where: {
-      prefix: String(keyId).slice(0, 8),
+      id: String(keyId),
       revokedAt: null,
       merchant: { isEnabled: true },
     },
@@ -77,21 +91,15 @@ export async function hmacAuthMiddleware(
     return;
   }
 
-  // Em produção, usaríamos argon2/bcrypt para verificar o hash da chave secreta.
-  // Para esta fase, validamos a assinatura HMAC usando o keyHash como segredo derivado.
-  // O fluxo real seria: merchant envia secret -> server deriva signing key -> valida HMAC.
-  // Aqui simplificamos: o keyHash armazena HMAC-SHA256 do corpo esperado para testes.
-  
+  // Use rawBody buffer directly — never re-serialize JSON
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
   const rawBody = raw ? raw.toString('utf8') : '';
   const path = request.url.split('?')[0] || '/';
   const signingString = buildSigningString(request.method, path, String(timestamp), rawBody);
-  
-  // Derivar chave de assinatura do keyHash (em prod: usar secret separada)
-  const derivedKey = createHmac('sha256', apiKey.keyHash)
-    .update(apiKey.merchantId)
-    .digest();
-  
+
+  // Derive signing key consistently: HMAC-SHA256(keyHash, merchantId)
+  const derivedKey = deriveSigningKey(apiKey.keyHash, apiKey.merchantId);
+
   const expectedSig = createHmac('sha256', derivedKey)
     .update(signingString)
     .digest('hex');
@@ -104,7 +112,7 @@ export async function hmacAuthMiddleware(
     return;
   }
 
-  // Atualizar lastUsedAt assincronamente (não bloquear resposta)
+  // Update lastUsedAt asynchronously (non-blocking)
   void prisma.merchantApiKey.update({
     where: { id: apiKey.id },
     data: { lastUsedAt: new Date() },
@@ -117,17 +125,18 @@ export async function hmacAuthMiddleware(
 }
 
 /**
- * Gera um par de API Key + Secret para um merchant.
- * Retorna o secret APENAS nesta chamada (nunca armazenado em claro).
+ * Generate an API Key + Secret pair for a merchant.
+ * The secret is returned ONLY in this call and never stored in plaintext.
+ * Storage: SHA-256(secret) as keyHash. Signing key derived at validation time.
  */
 export async function generateMerchantApiKey(
   merchantId: string,
   name: string,
 ): Promise<{ keyId: string; prefix: string; secret: string }> {
   const { randomBytes, createHash } = await import('node:crypto');
-  
+
   const rawSecret = `psk_${randomBytes(32).toString('hex')}`;
-  const prefix = rawSecret.slice(0, 12);
+  const prefix = rawSecret.slice(0, 12); // 12-char prefix for display only
   const keyHash = createHash('sha256').update(rawSecret).digest('hex');
 
   const record = await prisma.merchantApiKey.create({
@@ -147,7 +156,8 @@ export async function generateMerchantApiKey(
 }
 
 /**
- * Assina uma requisição para teste/integração.
+ * Sign a request for testing/integration purposes.
+ * Uses the SAME derivation as the middleware: HMAC-SHA256(SHA256(secret), merchantId).
  */
 export function signRequest(
   secret: string,
@@ -157,8 +167,10 @@ export function signRequest(
   timestamp: number,
   rawBody: string,
 ): string {
+  const { createHash } = require('node:crypto') as typeof import('node:crypto');
   const signingString = buildSigningString(method, path, String(timestamp), rawBody);
-  const keyHash = createHmac('sha256', secret).digest('hex');
+  // Derivation must match middleware: keyHash = SHA256(secret), then HMAC(keyHash, merchantId)
+  const keyHash = createHash('sha256').update(secret).digest('hex');
   const derivedKey = createHmac('sha256', keyHash).update(merchantId).digest();
   return createHmac('sha256', derivedKey).update(signingString).digest('hex');
 }

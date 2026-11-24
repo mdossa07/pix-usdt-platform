@@ -5,11 +5,12 @@ import { apiRequest } from '../../lib/api';
 
 interface Wallet {
   id: string;
+  label: string;
   networkCode: string;
-  addressEncrypted: string;
-  memoTagEncrypted: string | null;
-  isDefault: boolean;
+  addressLast8: string;
   status: string;
+  isDefault: boolean;
+  createdAt: string;
 }
 
 interface WebhookEvent {
@@ -265,8 +266,7 @@ export default function MerchantDashboard() {
                       {w.isDefault && <span className="text-[10px] uppercase bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded">Padrão</span>}
                       <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${w.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'}`}>{w.status}</span>
                     </div>
-                    <p className="font-mono text-xs text-slate-400 truncate max-w-md">{w.addressEncrypted}</p>
-                    {w.memoTagEncrypted && <p className="text-xs text-slate-500 mt-1">Memo/Tag: ••••••</p>}
+                    <p className="font-mono text-xs text-slate-400 truncate max-w-md">...{w.addressLast8}</p>
                   </div>
                   <button className="text-slate-500 hover:text-slate-300 text-sm">Editar</button>
                 </div>

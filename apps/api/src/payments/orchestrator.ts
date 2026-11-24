@@ -2,6 +2,7 @@ import { PrismaClient, PaymentStatus, TransferKind, TransferStatus, LedgerDirect
 import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
 import type { PaymentProvider } from '../providers/provider-contract.js';
+import { decryptPii } from '../security/crypto.js';
 
 /**
  * Orchestrates the exact two-beneficiary settlement flow.
@@ -116,17 +117,22 @@ export class PaymentOrchestrator {
     // Reuse existing idempotency key on retry to guarantee provider-side dedup
     const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:merchant:${randomUUID()}`;
     try {
+      // Decrypt PII before sending to provider (audit item #7)
+      const decryptedAddress = decryptPii(wallet.addressEncrypted);
+      const decryptedMemo = wallet.tagEncrypted ? decryptPii(wallet.tagEncrypted) : undefined;
+      const decryptedTaxId = wallet.holderTaxIdEncrypted ? decryptPii(wallet.holderTaxIdEncrypted) : undefined;
+
       const leg = await this.provider.settleMerchantUsdt({
-        merchantWallet: wallet.addressEncrypted,
+        merchantWallet: decryptedAddress,
         network: wallet.networkCode,
         amountUsdt: payment.merchantNetUsdt!.toString(),
         beneficiary: {
-          walletAddress: wallet.addressEncrypted,
+          walletAddress: decryptedAddress,
           network: wallet.networkCode,
-          memo: wallet.tagEncrypted ?? undefined,
+          memo: decryptedMemo,
           exchangeName: wallet.exchangeName ?? 'UNKNOWN',
           holderName: wallet.holderName,
-          holderTaxId: wallet.holderTaxIdEncrypted ?? undefined,
+          holderTaxId: decryptedTaxId,
         },
       }, idempotencyKey);
 
@@ -219,16 +225,19 @@ export class PaymentOrchestrator {
     if (!payment.commissionUsdt) return;
 
     const platformWalletRecord = await this.prisma.platformWallet.findFirst({ where: { isEnabled: true } });
-    const platformWallet = platformWalletRecord?.addressEncrypted ?? process.env.PLATFORM_USDT_WALLET_ADDRESS;
+    const platformWalletEnc = platformWalletRecord?.addressEncrypted ?? process.env.PLATFORM_USDT_WALLET_ADDRESS;
     const platformNetwork = platformWalletRecord?.networkCode ?? process.env.PLATFORM_USDT_NETWORK ?? 'TRC20';
 
-    if (!platformWallet) {
+    if (!platformWalletEnc) {
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: { status: PaymentStatus.UNDER_REVIEW, failureMessage: 'Platform wallet not configured' },
       });
       return;
     }
+
+    // Decrypt platform wallet before sending to provider (audit item #7)
+    const platformWallet = decryptPii(platformWalletEnc);
 
     const commissionAmount = payment.commissionUsdt;
     if (!commissionAmount) return;

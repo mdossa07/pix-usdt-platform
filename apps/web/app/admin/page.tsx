@@ -53,7 +53,7 @@ export default function AdminDashboard() {
     if (!token) return;
     setLoading(true);
     Promise.all([
-      apiRequest<PaymentRecord[]>('/v1/payments', {}, token),
+      apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
       apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
       apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
     ])
