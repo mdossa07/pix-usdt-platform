@@ -30,7 +30,7 @@ describe('admin TOTP recovery code consumption', () => {
   }, 20_000);
 
   it('allows exactly one winner when the same recovery code is submitted concurrently', async () => {
-    const rawCode = '0123456789ABCDEF';
+    const rawCode = '0123456789ABCDEF0123456789ABCDEF';
     await prisma.userTwoFactorRecoveryCode.create({
       data: { userId, codeHash: hashRecoveryCode(rawCode) },
     });
@@ -45,6 +45,6 @@ describe('admin TOTP recovery code consumption', () => {
   }, 20_000);
 
   it('does not consume an unknown code', async () => {
-    expect(await consumeRecoveryCode(prisma, userId, 'FFFFFFFFFFFFFFFF')).toBe(false);
+    expect(await consumeRecoveryCode(prisma, userId, 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF')).toBe(false);
   });
 });
