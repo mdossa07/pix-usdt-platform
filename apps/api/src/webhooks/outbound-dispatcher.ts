@@ -8,7 +8,7 @@ const RETRY_DELAYS_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000, 86_400
 
 export function merchantWebhookRetryDelay(attempt: number): number {
   const index = Math.max(0, Math.min(RETRY_DELAYS_MS.length - 1, attempt - 1));
-  return RETRY_DELAYS_MS[index];
+  return RETRY_DELAYS_MS[index] ?? RETRY_DELAYS_MS.at(-1) ?? 0;
 }
 
 export function startMerchantWebhookDispatcher(
