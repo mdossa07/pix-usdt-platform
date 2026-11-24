@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildCsv, csvCell } from '../../../web/lib/csv';
+import { buildCsv, csvCell } from '../../../web/lib/csv.js';
 
 test('quotes delimiters, quotes and embedded newlines', () => {
   assert.equal(csvCell('Alpha, "Beta"\nGamma'), '"Alpha, ""Beta""\nGamma"');
