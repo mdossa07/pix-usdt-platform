@@ -228,11 +228,15 @@ model WebhookEvent {
   providerEventId  String?
   eventType        String
   payloadEncrypted String
+  payloadHash      String?
   signatureValid   Boolean
+  processingAt     DateTime?
+  processingToken  String?
   processedAt      DateTime?
   receivedAt       DateTime @default(now())
   @@unique([provider, providerEventId])
   @@index([provider, eventType, receivedAt])
+  @@index([processedAt, processingAt])
 }
 
 model LedgerEntry {

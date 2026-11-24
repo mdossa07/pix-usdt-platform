@@ -20,6 +20,7 @@ import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
+import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -332,16 +333,16 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   const event = parseFoxbitWebhook(body);
   if (!event) return reply.code(400).send({ error: 'invalid_event_payload' });
   const state = mapWebhookStatusToPaymentState(event.webhook_type, event.data.to_state);
-  let duplicate = false;
+  let claim;
   try {
-    await prisma.webhookEvent.create({ data: { provider: 'FOXBIT', providerEventId: event.event_id, eventType: event.webhook_type, payloadEncrypted: encryptPii(raw.toString('utf8')), signatureValid: true } });
+    claim = await claimWebhookEvent(prisma, { provider: 'FOXBIT', providerEventId: event.event_id, eventType: event.webhook_type, rawPayload: raw.toString('utf8'), payloadEncrypted: encryptPii(raw.toString('utf8')) });
   } catch (error) {
-    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
-      duplicate = true;
-      const prior = await prisma.webhookEvent.findFirst({ where: { provider: 'FOXBIT', providerEventId: event.event_id } });
-      if (prior?.processedAt) return reply.code(200).send({ received: true, duplicate: true, processed: true });
-    } else throw error;
+    if (error instanceof Error && error.message === 'webhook_event_payload_conflict') return reply.code(409).send({ error: 'webhook_event_payload_conflict' });
+    throw error;
   }
+  if (claim.status === 'processed') return reply.code(200).send({ received: true, duplicate: true, processed: true });
+  if (claim.status === 'busy') return reply.code(503).header('retry-after', '5').send({ received: true, retry: true, reason: 'event_processing' });
+  const duplicate = claim.duplicate;
   let processed = false;
   const postPaymentStatuses: PaymentStatus[] = [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED];
   const foxbitOpenPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
@@ -373,8 +374,10 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
       processed = changed.count === 1;
     } else if (payment?.status === PaymentStatus.FAILED) processed = true;
   }
-  await prisma.webhookEvent.updateMany({ where: { provider: 'FOXBIT', providerEventId: event.event_id }, data: { processedAt: processed ? new Date() : null } });
+  if (processed) await completeWebhookEvent(prisma, claim.eventId, claim.token);
+  else await releaseWebhookEvent(prisma, claim.eventId, claim.token);
   request.log.info({ eventId: event.event_id, eventType: event.webhook_type, state, processed, duplicate }, 'Foxbit webhook recorded');
+  if (!processed) return reply.code(503).header('retry-after', '30').send({ received: true, processed: false, retry: true });
   return reply.code(200).send({ received: true, processed, duplicate });
 });
 // --- TransFi Webhook Handler ---
@@ -395,26 +398,17 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   const payload = parseTransFiWebhook(raw);
   const newState = mapTransFiStatusToPaymentState(payload.status);
 
-  // Record every authenticated event before applying state changes. Provider event IDs
-  // are unique; duplicate deliveries are acknowledged without repeating side effects.
-  let duplicate = false;
+  // Persist and claim the authenticated event before applying financial side effects.
+  let claim;
   try {
-    await prisma.webhookEvent.create({
-      data: {
-        provider: 'TRANSFI',
-        providerEventId: payload.eventId,
-        eventType: payload.entityType ?? 'unknown',
-        payloadEncrypted: encryptPii(raw.toString('utf8')),
-        signatureValid: true,
-      },
-    });
+    claim = await claimWebhookEvent(prisma, { provider: 'TRANSFI', providerEventId: payload.eventId, eventType: payload.entityType ?? 'unknown', rawPayload: raw.toString('utf8'), payloadEncrypted: encryptPii(raw.toString('utf8')) });
   } catch (error) {
-    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
-      duplicate = true;
-      const prior = await prisma.webhookEvent.findFirst({ where: { provider: 'TRANSFI', providerEventId: payload.eventId } });
-      if (prior?.processedAt) return reply.code(200).send({ received: true, duplicate: true, processed: true });
-    } else throw error;
+    if (error instanceof Error && error.message === 'webhook_event_payload_conflict') return reply.code(409).send({ error: 'webhook_event_payload_conflict' });
+    throw error;
   }
+  if (claim.status === 'processed') return reply.code(200).send({ received: true, duplicate: true, processed: true });
+  if (claim.status === 'busy') return reply.code(503).header('retry-after', '5').send({ received: true, retry: true, reason: 'event_processing' });
+  const duplicate = claim.duplicate;
 
   let processed = false;
   const postPaymentStatuses: PaymentStatus[] = [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED];
@@ -449,11 +443,10 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     // beneficiary transfers. Only the payout orchestrator may complete a payment.
   }
 
-  await prisma.webhookEvent.updateMany({
-    where: { provider: 'TRANSFI', providerEventId: payload.eventId },
-    data: { processedAt: processed ? new Date() : null },
-  });
+  if (processed) await completeWebhookEvent(prisma, claim.eventId, claim.token);
+  else await releaseWebhookEvent(prisma, claim.eventId, claim.token);
   request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed, duplicate }, 'TransFi webhook recorded');
+  if (!processed) return reply.code(503).header('retry-after', '30').send({ received: true, processed: false, retry: true });
   return reply.code(200).send({ received: true, processed, duplicate });
 });
 

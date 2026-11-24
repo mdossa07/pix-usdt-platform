@@ -1,11 +1,11 @@
 # Deploy & Security Guide
 
 ## Prerequisites
-- Node.js 20+
+- Node.js 22+
 - PostgreSQL 15+
 - Redis 7+
 - Docker & Docker Compose (for local/test)
-- Foxbit Partner API credentials (sandbox or production)
+- Provider sandbox and production credentials only after written approval
 
 ## Environment Variables
 Copy `.env.example` to `.env` and fill all required values:
@@ -14,63 +14,69 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/pixsplit
 REDIS_URL=redis://localhost:6379
 JWT_SECRET=<random-256-bit-hex>
 PII_ENCRYPTION_KEY=<random-256-bit-hex>
-FOXBIT_API_KEY=<from-foxbit-dashboard>
-FOXBIT_API_SECRET=<from-foxbit-dashboard>
-FOXBIT_WEBHOOK_SECRET=<from-foxbit-dashboard>
-PAYMENT_PROVIDER_MODE=mock|foxbit  # NEVER use 'mock' in production
+FOXBIT_API_KEY=<from-provider-dashboard>
+FOXBIT_API_SECRET=<from-provider-dashboard>
+FOXBIT_WEBHOOK_SECRET=<from-provider-dashboard>
+PAYMENTS_MODE=mock|sandbox|live
 ADMIN_PASSWORD=<strong-password>
 MERCHANT_PASSWORD=<strong-password>
-SEED_ALLOW_PRODUCTION=false  # Set true ONLY for initial prod setup
+SEED_ALLOW_PRODUCTION=false
 ```
 
 ## Local Development
 ```bash
-docker compose up -d          # Start Postgres + Redis
-pnpm install                  # Install dependencies
-pnpm db:migrate               # Apply schema migrations
-pnpm db:seed                  # Seed test data (dev only)
-pnpm dev                      # Start API + Web in watch mode
+docker compose up -d
+pnpm install
+pnpm db:generate
+pnpm db:migrate:dev
+pnpm db:seed
+pnpm dev
 ```
 
+## Database migration policy
+
+- `pnpm db:migrate:dev` is for local development only; it may create new migration files.
+- `pnpm db:migrate` runs `prisma migrate deploy` and is the safe migration command for CI/staging/production.
+- Never run `prisma db push` against production.
+- The CI verifies all committed migrations against an empty PostgreSQL schema.
+
+### Existing database created before migration history
+
+The initial migration is `20261124000000_initial_schema`. For an existing database that already has the exact schema represented by that baseline (before webhook claim lease columns), take a verified backup and compare the live schema first. Then mark only the baseline as applied and deploy subsequent migrations:
+
+```bash
+pnpm --filter @pixsplit/api exec prisma migrate resolve --applied 20261124000000_initial_schema --schema prisma/schema.prisma
+pnpm db:migrate
+```
+
+Do not mark the baseline as applied on an empty database. A fresh database must run `pnpm db:migrate` so the initial schema and every later migration are actually created. If the existing schema differs from the baseline, stop and create a reviewed data-preserving migration plan instead of forcing resolution.
+
 ## Production Deploy
-1. **Build**: `pnpm build`
-2. **Migrate**: `pnpm db:migrate` (against production DB)
-3. **Seed** (first time only): `SEED_ALLOW_PRODUCTION=true pnpm db:seed`
-4. **Start**: Use PM2/Docker/systemd to run `apps/api/dist/server.js` and `apps/web/.next/standalone`
-5. **HTTPS**: Terminate TLS at reverse proxy (nginx/Caddy/Cloudflare)
-6. **Health Checks**: `GET /health` returns 200 when DB/Redis are connected
+1. Back up PostgreSQL and verify that the backup can be restored.
+2. Set secrets through the deployment secret manager, not a committed `.env`.
+3. Run `pnpm build`.
+4. Run `pnpm db:migrate` against the target database.
+5. Start API and web services behind HTTPS.
+6. Verify readiness, queue connectivity, database connectivity and provider webhook signatures.
+7. Keep real-money endpoints disabled until provider, compliance and end-to-end certification are complete.
 
 ## Security Hardening
-- **PII Encryption**: All sensitive fields (wallet addresses, tax IDs) encrypted with AES-256-GCM before storage.
-- **HMAC Auth**: Merchant API requests use HMAC-SHA256 with an encrypted random secret, a separate database verifier, a timestamp and a cryptographically random per-request nonce. The canonical payload includes method, path, timestamp, nonce and raw body. Nonces are consumed atomically; a replay is rejected.
-- **Webhook Signature**: Verified against raw body using constant-time comparison. Authenticated events are fingerprinted, atomically claimed with a recoverable PostgreSQL lease, and only marked complete after successful processing. Unresolved events release the claim and return HTTP 503 with `Retry-After` so the provider can retry.
+- **PII Encryption**: Sensitive wallet addresses and tax identifiers are encrypted with AES-256-GCM.
+- **HMAC Auth**: Merchant API requests use encrypted signing secrets, a separate database verifier, timestamp validation and a cryptographically random nonce consumed atomically.
+- **Webhook Signature**: Verified against raw body with constant-time comparison. Authenticated events are fingerprinted, atomically claimed with a recoverable PostgreSQL lease, and completed only after successful processing.
+- **Replay Protection**: Repeated merchant API nonces are rejected.
 - **Rate Limiting**: IP-based on public routes; identity-based on authenticated routes.
-- **CORS**: Restricted to known frontend origins in production.
-- **Secrets**: Never logged, never returned in API responses, never committed to git.
-- **RBAC**: Admin endpoints require `SUPER_ADMIN` role; merchant endpoints scoped to own merchant ID.
-- **Audit Trail**: All state-changing operations logged to `AuditEvent` table.
+- **CORS**: Restrict production origins to the deployed application.
+- **Secrets**: Never log or commit secrets. Back up `PII_ENCRYPTION_KEY` separately; losing it makes encrypted signing secrets and PII unrecoverable.
+- **RBAC**: Administrative endpoints require the appropriate privileged role; merchant operations are scoped to the authenticated merchant.
+- **Audit Trail**: State-changing operations are recorded in `AuditEvent`.
 
-## Monitoring & Alerts
-- **Queue Health**: Monitor BullMQ queue depth and worker concurrency via Redis.
-- **Failed Jobs**: Dead-lettered settlements appear in admin panel under "Reconciliation".
-- **Provider Status**: Foxbit API latency/error rate tracked in logs; alert if >5% failure over 5min.
-- **Database**: Connection pool saturation and slow query logging enabled.
+## Provider webhook recovery
 
-## Backup Strategy
-- **PostgreSQL**: Daily pg_dump + WAL archiving to S3/GCS.
-- **Redis**: RDB snapshots every hour; AOF disabled (queues are transient).
-- **Secrets**: Stored in vault (HashiCorp/AWS Secrets Manager); rotated quarterly.
+Foxbit and TransFi events are keyed by provider plus provider event ID. The API stores a SHA-256 fingerprint of the authenticated raw payload and rejects a different body under an existing event ID. For legacy rows created before payload fingerprints existed, the service decrypts the stored original body, verifies an exact match and then backfills the fingerprint; unverifiable or mismatched rows fail closed. PostgreSQL leases prevent concurrent claims and can be reclaimed after 60 seconds. A worker with a replaced lease token cannot mark the newer claim complete. Unresolved events return HTTP 503 with `Retry-After`; confirm each provider's retry behavior in sandbox before production.
 
 ## Known Limitations
-- **No Real Money Testing**: Sandbox uses mock PIX and testnet wallets. Production requires Foxbit approval.
-- **Travel Rule**: Not yet automated; manual declaration required for large withdrawals.
-- **Multi-currency**: Only BRL→USDT supported currently.
-- **Webhook Retries**: Foxbit retries webhooks up to 3 times; our idempotency handles duplicates safely.
-## Merchant API key storage change
-
-The schema includes nullable `MerchantApiKey.signingSecretEncrypted` and webhook payload/lease fields. Apply committed migrations with `pnpm --filter @pixsplit/api exec prisma migrate deploy --schema prisma/schema.prisma` before deploying the API code. Existing key rows without this value are intentionally rejected with `api_key_rotation_required`; merchants must create replacement keys and update their integrations, then revoke the old keys. Keep `PII_ENCRYPTION_KEY` in a separate secret manager and back it up securely: losing it makes encrypted API signing secrets and other encrypted personal data unrecoverable. Do not reuse the database backup as the only copy of this key.
-
-
-## Provider webhook event recovery
-
-Foxbit and TransFi events are keyed by provider plus provider event ID. The API stores a SHA-256 fingerprint of the authenticated raw payload and rejects a different payload under an already-used event ID. A PostgreSQL lease prevents concurrent workers from applying the same event; abandoned leases can be reclaimed after 60 seconds. Events are marked processed only after the payment transition and settlement enqueue complete. If an event cannot be matched or processed, the API returns HTTP 503 with a 30-second Retry-After and releases its claim. Confirm each provider's retry behavior and sandbox policy before enabling live payments.
+- No real PIX collection, BRL/USDT conversion or on-chain payout is enabled by this repository baseline.
+- Foxbit and TransFi business operations still require exact provider contracts and sandbox certification.
+- Travel Rule and compliance workflows require provider/legal validation.
+- Production deployment remains blocked until a complete PIX → conversion → 98% merchant payout + 2% platform commission flow passes end-to-end certification.
