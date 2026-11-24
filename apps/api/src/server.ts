@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
-import { handleFoxbitWebhookEvent } from './providers/foxbit/foxbit-webhook.js';
+import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
@@ -284,30 +284,42 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   const signatureHeader = request.headers['x-fb-signature'];
   const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
   if (!raw) return reply.code(400).send({ error: 'missing_raw_body' });
-  const result = await handleFoxbitWebhookEvent({
-    rawBody: raw,
-    signature: signature ?? '',
-    webhookSecret: config.FOXBIT_WEBHOOK_SECRET,
-  });
-  if (!result.accepted) {
-    return reply.code(result.duplicate ? 200 : 401).send({
-      accepted: false,
-      duplicate: result.duplicate,
-      error: result.duplicate ? 'duplicate_event' : 'invalid_webhook_signature',
-    });
+  if (!verifyFoxbitWebhook(raw, signature, config.FOXBIT_WEBHOOK_SECRET)) return reply.code(401).send({ error: 'invalid_webhook_signature' });
+  let body: unknown;
+  try { body = JSON.parse(raw.toString('utf8')); } catch { return reply.code(400).send({ error: 'invalid_json' }); }
+  const event = parseFoxbitWebhook(body);
+  if (!event) return reply.code(400).send({ error: 'invalid_event_payload' });
+  const state = mapWebhookStatusToPaymentState(event.webhook_type, event.data.to_state);
+  try {
+    await prisma.webhookEvent.create({ data: { provider: 'FOXBIT', providerEventId: event.event_id, eventType: event.webhook_type, payloadEncrypted: encryptPii(raw.toString('utf8')), signatureValid: true } });
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(200).send({ received: true, duplicate: true });
+    throw error;
   }
-  request.log.info(
-    { eventType: result.eventType, eventId: result.eventId, paymentUpdated: result.paymentUpdated },
-    'Foxbit webhook processed (Partner API v3)',
-  );
-  return reply.code(202).send({
-    accepted: true,
-    eventId: result.eventId,
-    eventType: result.eventType,
-    paymentUpdated: result.paymentUpdated,
-  });
+  let processed = false;
+  if (event.data.type !== 'withdrawal' && event.data.purchase_id && state === 'PIX_CONFIRMED') {
+    const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
+    if (payment && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+      const changed = await prisma.payment.updateMany({
+        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      });
+      if (changed.count === 1) { await enqueueSettlement(payment.id, payment.amountBrlCents); processed = true; }
+    }
+  } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
+    const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
+    if (payment && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+      const changed = await prisma.payment.updateMany({
+        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
+      });
+      processed = changed.count === 1;
+    }
+  }
+  await prisma.webhookEvent.updateMany({ where: { provider: 'FOXBIT', providerEventId: event.event_id }, data: { processedAt: processed ? new Date() : null } });
+  request.log.info({ eventId: event.event_id, eventType: event.webhook_type, state, processed }, 'Foxbit webhook recorded');
+  return reply.code(200).send({ received: true, processed });
 });
-
 // --- TransFi Webhook Handler ---
 app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, reply) => {
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
@@ -331,8 +343,8 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     await prisma.webhookEvent.create({
       data: {
         provider: 'TRANSFI',
-        providerEventId: payload.id,
-        eventType: payload.type,
+        providerEventId: payload.eventId,
+        eventType: payload.entityType,
         payloadEncrypted: encryptPii(raw.toString('utf8')),
         signatureValid: true,
       },
@@ -346,7 +358,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
 
   let processed = false;
   const openPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
-  if (payload.entityId && newState) {
+  if (payload.entityId && newState && payload.entityType === 'order' && payload.orderType === 'payin') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
     if (payment && newState === 'PAID' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
@@ -369,10 +381,10 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   }
 
   await prisma.webhookEvent.updateMany({
-    where: { provider: 'TRANSFI', providerEventId: payload.id },
+    where: { provider: 'TRANSFI', providerEventId: payload.eventId },
     data: { processedAt: processed ? new Date() : null },
   });
-  request.log.info({ eventId: payload.id, eventType: payload.type, processed }, 'TransFi webhook recorded');
+  request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed }, 'TransFi webhook recorded');
   return reply.code(200).send({ received: true, processed });
 });
 
