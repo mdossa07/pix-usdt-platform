@@ -92,7 +92,7 @@ export interface TransFiOrderInput {
   [key: string]: unknown;
 }
 
-function toQueryString(values: Record<string, string | number | boolean | undefined>): string {
+function toQueryString<T extends object>(values: T): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {
     if (value !== undefined) query.set(key, String(value));
@@ -270,7 +270,9 @@ export class TransFiClient {
     }
 
     const requiresUserId = ['payin', 'payout', 'swap', 'gaming'].includes(input.orderType);
-    if (requiresUserId && (!input.userId || !/^UX-[A-Za-z0-9-]+$/.test(input.userId))) {
+    const supportsThirdPartyUsers = ['onramp', 'offramp'].includes(input.orderType);
+    const hasNestedUserId = Boolean(input.source.userId || input.destination.userId);
+    if ((requiresUserId || (supportsThirdPartyUsers && !hasNestedUserId)) && (!input.userId || !/^UX-[A-Za-z0-9-]+$/.test(input.userId))) {
       throw new Error('transfi_user_id_required');
     }
 
@@ -283,7 +285,7 @@ export class TransFiClient {
   }
 
   getOrder(orderId: string, midOverride?: string) {
-    if (!/^OR-[A-Za-z0-9-]+$/.test(orderId)) throw new Error('invalid_transfi_order_id');
+    if (!/^(OR|PF)-[A-Za-z0-9-]+$/.test(orderId)) throw new Error('invalid_transfi_order_id');
     return this.request({
       method: 'GET',
       path: `/v3/orders/${encodeURIComponent(orderId)}`,
