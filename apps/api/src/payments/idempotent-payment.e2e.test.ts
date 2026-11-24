@@ -98,8 +98,10 @@ describe('idempotent payment creation', () => {
       return result.response;
     });
     expect(new Set(responses.map(response => response.id)).size).toBe(1);
-    expect(responses[0].status).toBe('PIX_PENDING');
-    const savedPayment = await prisma.payment.findUniqueOrThrow({ where: { id: responses[0].id } });
+    const firstResponse = responses.at(0);
+    if (!firstResponse) throw new Error('expected a stored payment response');
+    expect(firstResponse.status).toBe('PIX_PENDING');
+    const savedPayment = await prisma.payment.findUniqueOrThrow({ where: { id: firstResponse.id } });
     expect(savedPayment.status).toBe('PIX_PENDING');
     expect(savedPayment.commissionBps).toBe(225);
     expect(await prisma.payment.count({ where: { merchantId } })).toBe(1);
