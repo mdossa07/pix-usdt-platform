@@ -15,6 +15,7 @@ import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from '
 import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecoveryCode } from './security/two-factor-recovery.js';
 import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
 import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
+import { isAuthSessionActive } from './security/session-store.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -43,22 +44,38 @@ const sessionCookieOptions = {
   maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
 };
 
-function issueBrowserSession(
+async function issueBrowserSession(
+  request: FastifyRequest,
   reply: FastifyReply,
   user: { id: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT' },
   options: { twoFactorVerified?: boolean } = {},
-): string {
+): Promise<string> {
   const csrfToken = randomBytes(32).toString('hex');
+  const jti = randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
   const token = app.jwt.sign({
     sub: user.id,
     role: user.role,
+    jti,
     csrfToken,
     twoFactorVerified: options.twoFactorVerified === true,
+  }, { expiresIn: SESSION_MAX_AGE_SECONDS });
+
+  // Persist before issuing the cookie so every accepted JWT can be revoked server-side.
+  await prisma.authSession.create({
+    data: {
+      jti,
+      userId: user.id,
+      expiresAt,
+      ipAddress: request.ip,
+      userAgent: typeof request.headers['user-agent'] === 'string'
+        ? request.headers['user-agent'].slice(0, 512)
+        : null,
+    },
   });
   reply.header('Set-Cookie', buildSessionCookieHeader(token, sessionCookieOptions));
   return csrfToken;
 }
-
 function clearBrowserSession(reply: FastifyReply): void {
   reply.header('Set-Cookie', clearSessionCookieHeader(sessionCookieOptions));
 }
@@ -80,6 +97,20 @@ app.decorate('authenticate', async (request, reply) => {
 
   if ((request.user as { purpose?: string }).purpose === 'admin-2fa-challenge') {
     await reply.code(401).send({ error: 'two_factor_required' });
+    return;
+  }
+
+  const sessionJti = (request.user as { jti?: unknown }).jti;
+  if (typeof sessionJti !== 'string' || sessionJti.length !== 36) {
+    await reply.code(401).send({ error: 'unauthorized' });
+    return;
+  }
+  const authSession = await prisma.authSession.findUnique({
+    where: { jti: sessionJti },
+    select: { userId: true, expiresAt: true, revokedAt: true },
+  });
+  if (!isAuthSessionActive(authSession, request.user.sub, new Date())) {
+    await reply.code(401).send({ error: 'session_revoked_or_expired' });
     return;
   }
 
@@ -192,7 +223,7 @@ app.post('/v1/auth/register', async (request, reply) => {
       } },
     }, include: { merchant: true } });
     await prisma.auditEvent.create({ data: { actorUserId: result.id, action: 'ACCOUNT_REGISTERED', entityType: 'USER', entityId: result.id } });
-    const csrfToken = issueBrowserSession(reply, { id: result.id, role: result.role });
+    const csrfToken = await issueBrowserSession(request, reply, { id: result.id, role: result.role });
     return reply.code(201).send({ csrfToken, user: { id: result.id, email: result.email, fullName: result.fullName, role: result.role }, merchant: { id: result.merchant!.id, kycStatus: result.merchant!.kycStatus } });
   } catch (error) {
     if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(409).send({ error: 'email_already_registered' });
@@ -215,7 +246,7 @@ app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '5 minu
   }
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role });
+  const csrfToken = await issueBrowserSession(request, reply, { id: user.id, role: user.role });
   return { csrfToken, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role }, merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null };
 });
 
@@ -275,7 +306,7 @@ app.post('/v1/auth/2fa/verify', {
     return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
   }
 
-  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
+  const csrfToken = await issueBrowserSession(request, reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
   await prisma.auditEvent.create({
     data: {
       actorUserId: user.id,
@@ -299,9 +330,62 @@ app.get('/v1/auth/csrf', { preHandler: [app.authenticate] }, async (request, rep
   return { csrfToken };
 });
 
-app.post('/v1/auth/logout', { preHandler: [app.authenticate] }, async (_request, reply) => {
+app.get('/v1/auth/sessions', { preHandler: [app.authenticate] }, async (request) => {
+  const now = new Date();
+  const currentJti = (request.user as { jti?: string }).jti;
+  const sessions = await prisma.authSession.findMany({
+    where: { userId: userId(request), revokedAt: null, expiresAt: { gt: now } },
+    orderBy: { createdAt: 'desc' },
+    take: 25,
+    select: { id: true, jti: true, createdAt: true, expiresAt: true, ipAddress: true, userAgent: true },
+  });
+  return {
+    sessions: sessions.map(({ jti, ...session }) => ({ ...session, current: jti === currentJti })),
+  };
+});
+
+app.delete('/v1/auth/sessions/:sessionId', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const parsed = z.object({ sessionId: z.string().min(1).max(64) }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_session_id' });
+
+  const target = await prisma.authSession.findFirst({
+    where: { id: parsed.data.sessionId, userId: userId(request), revokedAt: null },
+    select: { id: true, jti: true },
+  });
+  if (!target) return reply.code(404).send({ error: 'session_not_found' });
+
+  const revoked = await prisma.authSession.updateMany({
+    where: { id: target.id, userId: userId(request), revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (revoked.count !== 1) return reply.code(409).send({ error: 'session_already_revoked' });
+
+  await audit(request, 'AUTH_SESSION_REVOKED', 'AUTH_SESSION', target.id, { current: target.jti === (request.user as { jti?: string }).jti });
+  if (target.jti === (request.user as { jti?: string }).jti) clearBrowserSession(reply);
+  return { success: true };
+});
+
+app.post('/v1/auth/logout', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const jti = (request.user as { jti?: string }).jti;
+  if (jti) {
+    await prisma.authSession.updateMany({
+      where: { jti, userId: userId(request), revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await audit(request, 'AUTH_SESSION_REVOKED', 'AUTH_SESSION', jti, { reason: 'logout' });
+  }
   clearBrowserSession(reply);
   return { success: true };
+});
+
+app.post('/v1/auth/logout-all', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const revoked = await prisma.authSession.updateMany({
+    where: { userId: userId(request), revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  await audit(request, 'AUTH_SESSIONS_REVOKED', 'USER', userId(request), { count: revoked.count });
+  clearBrowserSession(reply);
+  return { success: true, revokedCount: revoked.count };
 });
 
 app.get('/v1/me', { preHandler: app.authenticate }, async (request, reply) => {
@@ -402,7 +486,7 @@ app.post('/v1/admin/2fa/enable', {
   if (!enabled) return reply.code(409).send({ error: 'two_factor_setup_changed' });
 
   await audit(request, 'ADMIN_2FA_ENABLED', 'USER', user.id, { enabledAt: enabledAt.toISOString(), recoveryCodesIssued: recoveryCodes.length });
-  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
+  const csrfToken = await issueBrowserSession(request, reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
   return { enabled: true, enabledAt, recoveryCodes, csrfToken };
 });
 
