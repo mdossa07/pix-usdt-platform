@@ -81,10 +81,26 @@ model User {
   role         UserRole @default(MERCHANT)
   isActive     Boolean  @default(true)
   lastLoginAt  DateTime?
+  twoFactorSecretEncrypted        String?
+  twoFactorPendingSecretEncrypted String?
+  twoFactorEnabledAt              DateTime?
+  twoFactorLastUsedStep           BigInt?
+  twoFactorRecoveryCodes          UserTwoFactorRecoveryCode[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   merchant     Merchant?
   auditEvents  AuditEvent[]
+}
+
+model UserTwoFactorRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, usedAt])
 }
 
 model Merchant {

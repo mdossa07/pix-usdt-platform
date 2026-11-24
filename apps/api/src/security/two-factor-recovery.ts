@@ -1,0 +1,48 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { PrismaClient } from '@prisma/client';
+
+const RECOVERY_CODE_BYTES = 16;
+const DEFAULT_RECOVERY_CODE_COUNT = 10;
+
+export function generateRecoveryCodes(count = DEFAULT_RECOVERY_CODE_COUNT): string[] {
+  if (!Number.isInteger(count) || count < 1 || count > 20) {
+    throw new Error('invalid_recovery_code_count');
+  }
+  return Array.from({ length: count }, () => randomBytes(RECOVERY_CODE_BYTES).toString('hex').toUpperCase());
+}
+
+export function isRecoveryCode(value: string): boolean {
+  return /^[A-F0-9]{32}$/.test(value.toUpperCase());
+}
+
+export function hashRecoveryCode(value: string): string {
+  return createHash('sha256').update(value.toUpperCase()).digest('hex');
+}
+
+/**
+ * Atomically consumes one recovery code. Concurrent attempts may both read
+ * the unused row, but only one can win the guarded updateMany operation.
+ */
+export async function consumeRecoveryCode(
+  db: PrismaClient,
+  userId: string,
+  value: string,
+  usedAt = new Date(),
+): Promise<boolean> {
+  if (!isRecoveryCode(value)) return false;
+  const codeHash = hashRecoveryCode(value);
+  return db.$transaction(async (tx) => {
+    const consumed = await tx.userTwoFactorRecoveryCode.updateMany({
+      where: { userId, codeHash, usedAt: null },
+      data: { usedAt },
+    });
+    if (consumed.count !== 1) return false;
+
+    const loginUpdated = await tx.user.updateMany({
+      where: { id: userId, isActive: true, role: 'SUPER_ADMIN', twoFactorEnabledAt: { not: null } },
+      data: { lastLoginAt: usedAt },
+    });
+    if (loginUpdated.count !== 1) throw new Error('admin_account_not_eligible_for_recovery_login');
+    return true;
+  });
+}

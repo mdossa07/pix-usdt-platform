@@ -27,7 +27,21 @@ Cria usuário `MERCHANT` e perfil comercial inicial com KYC `NOT_STARTED`.
 { "email": "usuario@empresa.com", "password": "senha-com-12-ou-mais-caracteres" }
 ```
 
-Retorna JWT com validade de 2 horas. O frontend de desenvolvimento armazena o token no `localStorage`; antes de produção, migrar para cookie HttpOnly/Secure/SameSite ou BFF.
+Retorna JWT com validade de 2 horas para contas sem segundo fator ativo. Para um `SUPER_ADMIN` com TOTP ativado, retorna `requiresTwoFactor: true` e um `challengeToken` com validade de cinco minutos; esse token de desafio não pode ser usado como token de acesso.
+
+### `POST /v1/auth/2fa/verify`
+
+```json
+{ "challengeToken": "<token de desafio>", "code": "123456" }
+```
+
+Valida um código TOTP de seis dígitos ou um código de recuperação hexadecimal de 32 caracteres e retorna o JWT normal. O desafio e o código são limitados por taxa; cada passo TOTP e cada código de recuperação só podem ser consumidos uma vez, inclusive sob concorrência.
+
+### `GET /v1/admin/2fa/status`, `POST /v1/admin/2fa/setup`, `POST /v1/admin/2fa/enable`
+
+Apenas `SUPER_ADMIN`. O setup exige a senha atual e retorna uma chave de 160 bits e a URI `otpauth` para cadastro manual em um aplicativo autenticador. A chave pendente é cifrada no banco; o endpoint de status nunca revela segredo. Para ativar, envie `{ "code": "123456" }` a `POST /v1/admin/2fa/enable`. Na ativação, a API retorna dez códigos de recuperação independentes de 128 bits; eles aparecem uma única vez e apenas seus hashes são armazenados. Para gerar uma nova leva, use `POST /v1/admin/2fa/recovery-codes/regenerate` com senha atual e TOTP válido; os códigos não utilizados anteriores são invalidados. O endpoint retorna os novos códigos apenas uma vez. O TOTP usa SHA-1, seis dígitos e período de 30 segundos, com tolerância de um passo de relógio. O código de confirmação é marcado como consumido e não pode ser reutilizado.
+
+O JWT de desenvolvimento continua armazenado no `localStorage`; antes de produção, migrar para cookie HttpOnly/Secure/SameSite ou BFF.
 
 ### `GET /v1/me`
 
