@@ -345,9 +345,10 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   }
 
   let processed = false;
+  const openPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
   if (payload.entityId && newState) {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
-    if (payment && newState === 'PAID' && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+    if (payment && newState === 'PAID' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
         where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
         data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
@@ -356,7 +357,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
         await enqueueSettlement(payment.id, payment.amountBrlCents);
         processed = true;
       }
-    } else if (payment && newState === 'FAILED' && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+    } else if (payment && newState === 'FAILED' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
         where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
         data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
@@ -500,7 +501,8 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
   const { id } = request.params as { id: string };
   const payment = await prisma.payment.findUnique({ where: { id } });
   if (!payment) return reply.code(404).send({ error: 'not_found' });
-  const resumable = [PaymentStatus.FAILED, PaymentStatus.UNDER_REVIEW].includes(payment.status)
+  const resumableStatuses: PaymentStatus[] = [PaymentStatus.FAILED, PaymentStatus.UNDER_REVIEW];
+  const resumable = resumableStatuses.includes(payment.status)
     && payment.providerGrossUsdt !== null
     && payment.merchantNetUsdt !== null
     && payment.commissionUsdt !== null;
