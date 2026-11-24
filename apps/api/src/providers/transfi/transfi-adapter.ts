@@ -20,6 +20,46 @@ import { createHash } from 'node:crypto';
  * - Confirmação comercial COBO/POBO para comissão cross-MID
  * - KYC/KYB requirements por MID
  */
+
+export function mapTransFiChargeStatus(status: string): 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELED' {
+  switch (status) {
+    case 'fund_settled':
+    case 'asset_settled':
+    case 'completed':
+      return 'PAID';
+    case 'fund_failed':
+    case 'fund_deposit_failed':
+    case 'asset_settle_failed':
+    case 'rejected':
+    case 'failed':
+    case 'cancelled':
+      return 'CANCELED';
+    case 'expired':
+      return 'EXPIRED';
+    default:
+      return 'PENDING';
+  }
+}
+
+export function mapTransFiTransferStatus(status: string): 'PENDING' | 'COMPLETED' | 'FAILED' {
+  switch (status) {
+    case 'asset_settled':
+    case 'fund_settled':
+    case 'completed':
+      return 'COMPLETED';
+    case 'asset_settle_failed':
+    case 'fund_failed':
+    case 'fund_deposit_failed':
+    case 'rejected':
+    case 'failed':
+    case 'cancelled':
+    case 'expired':
+      return 'FAILED';
+    default:
+      return 'PENDING';
+  }
+}
+
 export class TransFiAdapter implements PaymentProvider {
   private readonly client: TransFiClient;
   private readonly mode: 'mock' | 'sandbox' | 'live';
@@ -89,25 +129,7 @@ export class TransFiAdapter implements PaymentProvider {
       path: `/v3/orders/${providerChargeId}`,
     });
 
-    switch (response.data.status) {
-      case 'fund_settled':
-      case 'asset_settled':
-      case 'completed':
-        return 'PAID';
-      case 'fund_failed':
-      case 'fund_deposit_failed':
-      case 'asset_settle_failed':
-      case 'rejected':
-      case 'failed':
-      case 'cancelled':
-        return 'CANCELED';
-      case 'expired':
-        return 'EXPIRED';
-      // fund_processing, fund_deposited, asset_processing and manual_review
-      // are deliberately non-final and must never trigger fulfillment.
-      default:
-        return 'PENDING';
-    }
+    return mapTransFiChargeStatus(response.data.status);
   }
 
   async settleMerchantUsdt(
@@ -210,24 +232,7 @@ export class TransFiAdapter implements PaymentProvider {
   }
 
   private mapOrderStatus(status: string): 'PENDING' | 'COMPLETED' | 'FAILED' {
-    switch (status) {
-      case 'asset_settled':
-      case 'fund_settled':
-      case 'completed':
-        return 'COMPLETED';
-      case 'asset_settle_failed':
-      case 'fund_failed':
-      case 'fund_deposit_failed':
-      case 'rejected':
-      case 'failed':
-      case 'cancelled':
-      case 'expired':
-        return 'FAILED';
-      // initiated, fund_processing, fund_deposited, asset_processing,
-      // approval_pending and manual_review remain non-final.
-      default:
-        return 'PENDING';
-    }
+    return mapTransFiTransferStatus(status);
   }
 
   private mockCreatePixCharge(input: CreatePixChargeInput, idempotencyKey: string): PixCharge {
