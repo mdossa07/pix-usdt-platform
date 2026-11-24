@@ -32,6 +32,7 @@ export default function LoginPage() {
           body: JSON.stringify({ challengeToken, code: twoFactorCode }),
         });
         sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+        localStorage.removeItem('pixsplit_token');
         localStorage.setItem('pixsplit_authenticated', '1');
         window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
         return;
@@ -56,6 +57,7 @@ export default function LoginPage() {
 
       if (!result.csrfToken || !result.user) throw new Error('Resposta de autenticação inválida.');
       sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+        localStorage.removeItem('pixsplit_token');
       localStorage.setItem('pixsplit_authenticated', '1');
       window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
     } catch (err) {
