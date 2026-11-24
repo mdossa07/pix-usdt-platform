@@ -16,6 +16,7 @@
 - Sessões de navegador em cookie `HttpOnly`, com `Secure` e `SameSite=None` em produção. O JWT não é devolvido ao JavaScript nem guardado no `localStorage`.
 - Proteção CSRF em mutações autenticadas por cookie, usando `Origin` da aplicação e `x-csrf-token` vinculado ao JWT assinado. Novas abas recuperam o token da sessão sem rotacioná-la.
 - TOTP RFC 6238 e dez códigos de recuperação independentes, armazenados apenas como hashes; o login desafia o segundo fator quando ele está habilitado.
+- Obrigatoriedade de MFA para superadministradores integrada no PR #14: sem matrícula TOTP, o superadmin só acessa status/configuração/ativação; após ativação, toda rota administrativa exige sessão verificada por MFA. CI da branch aprovada; merge commit `5191d19`.
 - O middleware revalida usuário ativo e papel atual no PostgreSQL em cada rota autenticada.
 - O logout limpa o cookie de navegador. O JWT é stateless e tem validade de duas horas; ainda não há revogação individual centralizada por JTI/sessão.
 
@@ -45,6 +46,7 @@
 - PR #10 — TOTP e códigos de recuperação.
 - PR #11 — cookies HttpOnly e proteção CSRF do painel; merge commit `05ce453`.
 - PR #12 — cliente TransFi v3 e testes de contrato; merge commit `88b77a7`.
+- PR #14 — MFA obrigatório em rotas de superadmin; merge commit `5191d19`. CI da branch aprovado; aguardar CI pós-merge no `master`.
 
 CI completo aprovado no head do PR #12: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45492613470
 
@@ -60,7 +62,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - Foxbit Partner depende de permissões comerciais específicas. Fiat Gateway no nível do parceiro e funding de sub-member são fluxos distintos; a arquitetura de saldo e os dois withdrawals precisam de aprovação escrita.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
 - Webhooks de saída seguros para sistemas dos comerciantes ainda não foram implementados.
-- TOTP está disponível, mas ainda não é obrigatório para todos os superadministradores; também falta documentar um processo multi-pessoa de break-glass.
+- TOTP agora é obrigatório para superadministradores; ainda falta documentar um processo multi-pessoa de break-glass.
 - Faltam revogação centralizada por sessão/JTI, teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
 
