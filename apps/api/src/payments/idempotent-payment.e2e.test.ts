@@ -98,6 +98,7 @@ describe('idempotent payment creation', () => {
       return result.response;
     });
     expect(new Set(responses.map(response => response.id)).size).toBe(1);
+    expect(responses[0]).toEqual(responses[1]);
     const firstResponse = responses.at(0);
     if (!firstResponse) throw new Error('expected a stored payment response');
     expect(firstResponse.status).toBe('PIX_PENDING');
@@ -107,6 +108,9 @@ describe('idempotent payment creation', () => {
     expect(await prisma.payment.count({ where: { merchantId } })).toBe(1);
     expect(await prisma.idempotencyRecord.count({
       where: { scope: `merchant:POST:/v1/payments:${merchantId}`, key },
+    })).toBe(1);
+    expect(await prisma.auditEvent.count({
+      where: { entityId: firstResponse.id, action: 'PAYMENT_CREATED' },
     })).toBe(1);
   }, 20_000);
 
