@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from './security/totp.js';
+import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecoveryCode } from './security/two-factor-recovery.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -156,7 +157,7 @@ app.post('/v1/auth/2fa/verify', {
 }, async (request, reply) => {
   const parsed = z.object({
     challengeToken: z.string().min(1).max(4096),
-    code: z.string().regex(/^\d{6}$/),
+    code: z.string().min(6).max(32),
   }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_challenge' });
 
@@ -175,27 +176,38 @@ app.post('/v1/auth/2fa/verify', {
     return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
   }
 
-  const secret = decryptPii(user.twoFactorSecretEncrypted);
-  const matchedStep = matchTotpCounter(secret, parsed.data.code);
-  if (matchedStep === null) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+  let factorType: 'TOTP' | 'RECOVERY';
+  if (/^\d{6}$/.test(parsed.data.code)) {
+    const secret = decryptPii(user.twoFactorSecretEncrypted);
+    const matchedStep = matchTotpCounter(secret, parsed.data.code);
+    if (matchedStep === null) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
 
-  const consumed = await prisma.user.updateMany({
-    where: {
-      id: user.id,
-      isActive: true,
-      role: 'SUPER_ADMIN',
-      twoFactorEnabledAt: { not: null },
-      OR: [
-        { twoFactorLastUsedStep: null },
-        { twoFactorLastUsedStep: { lt: BigInt(matchedStep) } },
-      ],
-    },
-    data: {
-      twoFactorLastUsedStep: BigInt(matchedStep),
-      lastLoginAt: new Date(),
-    },
-  });
-  if (consumed.count !== 1) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+    const consumed = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        isActive: true,
+        role: 'SUPER_ADMIN',
+        twoFactorEnabledAt: { not: null },
+        OR: [
+          { twoFactorLastUsedStep: null },
+          { twoFactorLastUsedStep: { lt: BigInt(matchedStep) } },
+        ],
+      },
+      data: {
+        twoFactorLastUsedStep: BigInt(matchedStep),
+        lastLoginAt: new Date(),
+      },
+    });
+    if (consumed.count !== 1) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+    factorType = 'TOTP';
+  } else if (isRecoveryCode(parsed.data.code)) {
+    const consumed = await consumeRecoveryCode(prisma, user.id, parsed.data.code);
+    if (!consumed) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    factorType = 'RECOVERY';
+  } else {
+    return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+  }
 
   const token = app.jwt.sign({ sub: user.id, role: user.role });
   await prisma.auditEvent.create({
@@ -205,6 +217,7 @@ app.post('/v1/auth/2fa/verify', {
       entityType: 'USER',
       entityId: user.id,
       ipAddress: request.ip,
+      metadata: { factorType } as Prisma.InputJsonObject,
     },
   });
   return {
@@ -224,10 +237,15 @@ app.get('/v1/admin/2fa/status', { preHandler: [app.authenticate] }, async (reque
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
   if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  const enabled = Boolean(user.twoFactorEnabledAt && user.twoFactorSecretEncrypted);
+  const recoveryCodesRemaining = enabled
+    ? await prisma.userTwoFactorRecoveryCode.count({ where: { userId: user.id, usedAt: null } })
+    : 0;
   return {
-    enabled: Boolean(user.twoFactorEnabledAt && user.twoFactorSecretEncrypted),
+    enabled,
     enabledAt: user.twoFactorEnabledAt,
     setupPending: Boolean(user.twoFactorPendingSecretEncrypted),
+    recoveryCodesRemaining,
   };
 });
 
@@ -279,23 +297,33 @@ app.post('/v1/admin/2fa/enable', {
   if (matchedStep === null) return reply.code(400).send({ error: 'invalid_two_factor_code' });
 
   const enabledAt = new Date();
-  const result = await prisma.user.updateMany({
-    where: {
-      id: user.id,
-      twoFactorEnabledAt: null,
-      twoFactorPendingSecretEncrypted: user.twoFactorPendingSecretEncrypted,
-    },
-    data: {
-      twoFactorSecretEncrypted: user.twoFactorPendingSecretEncrypted,
-      twoFactorPendingSecretEncrypted: null,
-      twoFactorEnabledAt: enabledAt,
-      twoFactorLastUsedStep: BigInt(matchedStep),
-    },
-  });
-  if (result.count !== 1) return reply.code(409).send({ error: 'two_factor_setup_changed' });
+  const recoveryCodes = generateRecoveryCodes();
+  const enabled = await prisma.$transaction(async (tx) => {
+    const result = await tx.user.updateMany({
+      where: {
+        id: user.id,
+        twoFactorEnabledAt: null,
+        twoFactorPendingSecretEncrypted: user.twoFactorPendingSecretEncrypted,
+      },
+      data: {
+        twoFactorSecretEncrypted: user.twoFactorPendingSecretEncrypted,
+        twoFactorPendingSecretEncrypted: null,
+        twoFactorEnabledAt: enabledAt,
+        twoFactorLastUsedStep: BigInt(matchedStep),
+      },
+    });
+    if (result.count !== 1) return false;
 
-  await audit(request, 'ADMIN_2FA_ENABLED', 'USER', user.id, { enabledAt: enabledAt.toISOString() });
-  return { enabled: true, enabledAt };
+    await tx.userTwoFactorRecoveryCode.deleteMany({ where: { userId: user.id } });
+    await tx.userTwoFactorRecoveryCode.createMany({
+      data: recoveryCodes.map(code => ({ userId: user.id, codeHash: hashRecoveryCode(code) })),
+    });
+    return true;
+  });
+  if (!enabled) return reply.code(409).send({ error: 'two_factor_setup_changed' });
+
+  await audit(request, 'ADMIN_2FA_ENABLED', 'USER', user.id, { enabledAt: enabledAt.toISOString(), recoveryCodesIssued: recoveryCodes.length });
+  return { enabled: true, enabledAt, recoveryCodes };
 });
 
 app.get('/v1/wallets', { preHandler: app.authenticate }, async (request) => {
