@@ -157,7 +157,11 @@ export class PaymentOrchestrator {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
               where: { id: currentAttempt.id },
-              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? currentAttempt.txHash },
+              data: {
+                status: TransferStatus.COMPLETED,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+                txHash: remoteStatus.txHash ?? currentAttempt.txHash,
+              },
             });
             await tx.payment.update({
               where: { id: paymentId },
@@ -169,7 +173,10 @@ export class PaymentOrchestrator {
         }
         if (remoteStatus?.status === 'FAILED') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
+              status: TransferStatus.FAILED,
+              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+            } });
             await tx.payment.update({
               where: { id: paymentId },
               data: { merchantTransferStatus: TransferStatus.FAILED },
@@ -178,7 +185,10 @@ export class PaymentOrchestrator {
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
+              status: TransferStatus.PROCESSING,
+              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+            } });
             await tx.payment.update({
               where: { id: paymentId },
               data: { merchantTransferStatus: TransferStatus.PROCESSING },
@@ -361,7 +371,11 @@ export class PaymentOrchestrator {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
               where: { id: currentAttempt.id },
-              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? currentAttempt.txHash },
+              data: {
+                status: TransferStatus.COMPLETED,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+                txHash: remoteStatus.txHash ?? currentAttempt.txHash,
+              },
             });
             await tx.payment.update({
               where: { id: paymentId },
@@ -373,7 +387,10 @@ export class PaymentOrchestrator {
         }
         if (remoteStatus?.status === 'FAILED') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
+              status: TransferStatus.FAILED,
+              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+            } });
             await tx.payment.update({
               where: { id: paymentId },
               data: { platformTransferStatus: TransferStatus.FAILED },
@@ -382,7 +399,10 @@ export class PaymentOrchestrator {
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
+              status: TransferStatus.PROCESSING,
+              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+            } });
             await tx.payment.update({
               where: { id: paymentId },
               data: { platformTransferStatus: TransferStatus.PROCESSING },
