@@ -236,8 +236,13 @@ app.post('/v1/admin/2fa/setup', {
   config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
 }, async (request, reply) => {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const parsed = z.object({ password: z.string().min(1).max(128) }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'current_password_required' });
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
-  if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  if (!user || !user.isActive) return reply.code(404).send({ error: 'user_not_found' });
+  if (!(await argon2.verify(user.passwordHash, parsed.data.password))) {
+    return reply.code(401).send({ error: 'invalid_credentials' });
+  }
   if (user.twoFactorEnabledAt) return reply.code(409).send({ error: 'two_factor_already_enabled' });
 
   const secret = generateTotpSecret();
