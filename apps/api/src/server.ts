@@ -141,7 +141,7 @@ app.post('/v1/auth/2fa/verify', {
 }, async (request, reply) => {
   const parsed = z.object({
     challengeToken: z.string().min(1).max(4096),
-    code: z.string().regex(/^\\d{6}$/),
+    code: z.string().regex(/^\d{6}$/),
   }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_challenge' });
 
@@ -245,7 +245,7 @@ app.post('/v1/admin/2fa/enable', {
   config: { rateLimit: { max: 6, timeWindow: '5 minutes' } },
 }, async (request, reply) => {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
-  const parsed = z.object({ code: z.string().regex(/^\\d{6}$/) }).strict().safeParse(request.body);
+  const parsed = z.object({ code: z.string().regex(/^\d{6}$/) }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_code' });
 
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
