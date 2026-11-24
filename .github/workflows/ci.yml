@@ -39,8 +39,11 @@ jobs:
       - run: pnpm test
       - name: Prepare integration database
         run: pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
-      - name: Verify deployable database migrations
-        run: pnpm --filter @pixsplit/api exec prisma migrate deploy --schema prisma/schema.prisma
+      - name: Prepare isolated migration verification schema
+        run: |
+          pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS migration_test;'
+      - name: Verify deployable migrations from an empty schema
+        run: DATABASE_URL="${DATABASE_URL%schema=public}schema=migration_test" pnpm --filter @pixsplit/api exec prisma migrate deploy --schema prisma/schema.prisma
       - name: Run financial integration scenarios
         run: pnpm --filter @pixsplit/api exec vitest run src/payments/orchestrator.e2e.test.ts
       - name: Prepare isolated HMAC integration schema
@@ -48,7 +51,7 @@ jobs:
           pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS hmac_test;'
           DATABASE_URL="${DATABASE_URL%schema=public}schema=hmac_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run merchant HMAC integration scenarios
-        run: pnpm --filter @pixsplit/api exec vitest run src/security/hmac-auth.test.ts
+        run: DATABASE_URL="${DATABASE_URL%schema=public}schema=hmac_test" pnpm --filter @pixsplit/api exec vitest run src/security/hmac-auth.test.ts
       - name: Prepare isolated webhook integration schema
         run: |
           pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS webhook_test;'
