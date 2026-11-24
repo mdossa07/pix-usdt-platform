@@ -133,7 +133,7 @@ app.post('/v1/auth/register', async (request, reply) => {
   }
 });
 
-app.post('/v1/auth/login', async (request, reply) => {
+app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '5 minutes' } } }, async (request, reply) => {
   const parsed = z.object({ email: z.string().email(), password: z.string().min(1) }).safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_credentials' });
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() }, include: { merchant: true } });
