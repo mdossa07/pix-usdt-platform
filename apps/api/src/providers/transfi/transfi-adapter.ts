@@ -91,13 +91,20 @@ export class TransFiAdapter implements PaymentProvider {
 
     switch (response.data.status) {
       case 'fund_settled':
+      case 'asset_settled':
       case 'completed':
         return 'PAID';
+      case 'fund_failed':
+      case 'fund_deposit_failed':
+      case 'asset_settle_failed':
+      case 'rejected':
       case 'failed':
       case 'cancelled':
         return 'CANCELED';
       case 'expired':
         return 'EXPIRED';
+      // fund_processing, fund_deposited, asset_processing and manual_review
+      // are deliberately non-final and must never trigger fulfillment.
       default:
         return 'PENDING';
     }
@@ -205,12 +212,19 @@ export class TransFiAdapter implements PaymentProvider {
   private mapOrderStatus(status: string): 'PENDING' | 'COMPLETED' | 'FAILED' {
     switch (status) {
       case 'asset_settled':
+      case 'fund_settled':
       case 'completed':
         return 'COMPLETED';
+      case 'asset_settle_failed':
+      case 'fund_failed':
+      case 'fund_deposit_failed':
+      case 'rejected':
       case 'failed':
       case 'cancelled':
       case 'expired':
         return 'FAILED';
+      // initiated, fund_processing, fund_deposited, asset_processing,
+      // approval_pending and manual_review remain non-final.
       default:
         return 'PENDING';
     }
