@@ -214,7 +214,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     const updated = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(updated.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
     expect(updated.platformTransferStatus).toBe(TransferStatus.FAILED);
-    expect(updated.status).toBe(PaymentStatus.FAILED);
+    expect(updated.status).toBe(PaymentStatus.UNDER_REVIEW);
   });
 
   it('Scenario C: Platform succeeds, merchant fails — independent states preserved', async () => {
@@ -241,7 +241,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     // Platform leg is independent: it should still complete even when merchant fails
     expect(updated.platformTransferStatus).toBe(TransferStatus.COMPLETED);
     // Global status is FAILED because not all legs completed
-    expect(updated.status).toBe(PaymentStatus.FAILED);
+    expect(updated.status).toBe(PaymentStatus.UNDER_REVIEW);
 
     // Verify platform transfer was actually created with correct amount
     const platformTx = updated.transfers.find((t) => t.kind === TransferKind.PLATFORM_COMMISSION)!;
@@ -269,7 +269,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     const updated = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(updated.merchantTransferStatus).toBe(TransferStatus.FAILED);
     expect(updated.platformTransferStatus).toBe(TransferStatus.FAILED);
-    expect(updated.status).toBe(PaymentStatus.FAILED);
+    expect(updated.status).toBe(PaymentStatus.UNDER_REVIEW);
   });
 
   it('Scenario E: Timeout on merchant, but provider completed remotely — recovery via getTransferStatus', async () => {

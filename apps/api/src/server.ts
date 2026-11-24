@@ -325,18 +325,54 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   const payload = parseTransFiWebhook(raw);
   const newState = mapTransFiStatusToPaymentState(payload.status);
 
-  if (newState && payload.entityId) {
-    const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
-    if (payment) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: newState === 'PAID' ? PaymentStatus.PIX_CONFIRMED : newState === 'COMPLETED' ? PaymentStatus.COMPLETED : newState === 'FAILED' ? PaymentStatus.FAILED : payment.status },
-      });
-      request.log.info({ entityId: payload.entityId, newState, eventType: payload.type }, 'TransFi webhook processed');
+  // Record every authenticated event before applying state changes. Provider event IDs
+  // are unique; duplicate deliveries are acknowledged without repeating side effects.
+  try {
+    await prisma.webhookEvent.create({
+      data: {
+        provider: 'TRANSFI',
+        providerEventId: payload.id,
+        eventType: payload.type,
+        payloadEncrypted: encryptPii(raw.toString('utf8')),
+        signatureValid: true,
+      },
+    });
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
+      return reply.code(200).send({ received: true, duplicate: true });
     }
+    throw error;
   }
 
-  return reply.code(200).send({ received: true });
+  let processed = false;
+  if (payload.entityId && newState) {
+    const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
+    if (payment && newState === 'PAID' && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+      const changed = await prisma.payment.updateMany({
+        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      });
+      if (changed.count === 1) {
+        await enqueueSettlement(payment.id, payment.amountBrlCents);
+        processed = true;
+      }
+    } else if (payment && newState === 'FAILED' && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+      const changed = await prisma.payment.updateMany({
+        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
+      });
+      processed = changed.count === 1;
+    }
+    // "asset_settled" means provider-side asset settlement, not both external
+    // beneficiary transfers. Only the payout orchestrator may complete a payment.
+  }
+
+  await prisma.webhookEvent.updateMany({
+    where: { provider: 'TRANSFI', providerEventId: payload.id },
+    data: { processedAt: processed ? new Date() : null },
+  });
+  request.log.info({ eventId: payload.id, eventType: payload.type, processed }, 'TransFi webhook recorded');
+  return reply.code(200).send({ received: true, processed });
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
