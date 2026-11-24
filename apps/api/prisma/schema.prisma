@@ -207,15 +207,18 @@ model Transfer {
 }
 
 model MerchantApiKey {
-  id           String   @id @default(cuid())
-  merchantId   String
-  merchant     Merchant @relation(fields: [merchantId], references: [id])
-  name         String
-  prefix       String
-  keyHash      String   @unique
-  lastUsedAt   DateTime?
-  revokedAt    DateTime?
-  createdAt    DateTime @default(now())
+  id                    String   @id @default(cuid())
+  merchantId            String
+  merchant              Merchant @relation(fields: [merchantId], references: [id])
+  name                  String
+  prefix                String
+  keyHash               String   @unique
+  // Encrypted with the application key so a database-only leak cannot forge HMAC requests.
+  // Nullable only to allow legacy keys to be rejected and rotated after schema rollout.
+  signingSecretEncrypted String?
+  lastUsedAt            DateTime?
+  revokedAt             DateTime?
+  createdAt             DateTime @default(now())
   @@index([merchantId, revokedAt])
 }
 
