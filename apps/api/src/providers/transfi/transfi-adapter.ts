@@ -7,6 +7,7 @@ import type {
 } from '../provider-contract.js';
 import { TransFiClient } from './transfi-client.js';
 import { config } from '../../config.js';
+import { createHash } from 'node:crypto';
 
 /**
  * TransFi v3 Adapter — COBO/POBO model.
@@ -30,7 +31,7 @@ export class TransFiAdapter implements PaymentProvider {
 
   async createPixCharge(input: CreatePixChargeInput, idempotencyKey: string): Promise<PixCharge> {
     if (this.mode === 'mock') {
-      return this.mockCreatePixCharge(input);
+      return this.mockCreatePixCharge(input, idempotencyKey);
     }
 
     const amountBrl = Number(input.amountBrlCents) / 100;
@@ -107,7 +108,7 @@ export class TransFiAdapter implements PaymentProvider {
     idempotencyKey: string,
   ): Promise<SettlementLeg> {
     if (this.mode === 'mock') {
-      return this.mockSettlement('merchant');
+      return this.mockSettlement('merchant', idempotencyKey);
     }
 
     const body = {
@@ -146,7 +147,7 @@ export class TransFiAdapter implements PaymentProvider {
     idempotencyKey: string,
   ): Promise<SettlementLeg> {
     if (this.mode === 'mock') {
-      return this.mockSettlement('platform');
+      return this.mockSettlement('platform', idempotencyKey);
     }
 
     const body = {
@@ -215,19 +216,20 @@ export class TransFiAdapter implements PaymentProvider {
     }
   }
 
-  private mockCreatePixCharge(input: CreatePixChargeInput): PixCharge {
+  private mockCreatePixCharge(input: CreatePixChargeInput, idempotencyKey: string): PixCharge {
+    const reference = createHash('sha256').update(idempotencyKey || input.merchantReference).digest('hex').slice(0, 24);
     return {
-      providerChargeId: `tf-mock-${input.merchantReference}`,
-      copyPaste: '00020126580014BR.GOV.BCB.PIX0136123e4567-e89b-12d3-a456-4266141740005204000053039865802BR5913Test Merchant6008Brasilia62070503***6304ABCD',
+      providerChargeId: `tf-mock-${reference}`,
+      copyPaste: `MOCK-PIX-NOT-PAYABLE-transfi-${reference}`,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     };
   }
 
-  private mockSettlement(leg: 'merchant' | 'platform'): SettlementLeg {
+  private mockSettlement(leg: 'merchant' | 'platform', idempotencyKey: string): SettlementLeg {
+    const reference = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24);
     return {
-      providerTransferId: `tf-mock-settle-${leg}-${Date.now()}`,
+      providerTransferId: `tf-mock-settle-${leg}-${reference}`,
       status: 'COMPLETED',
-      txHash: `0x${Buffer.from(`mock-${leg}-${Date.now()}`).toString('hex').slice(0, 64)}`,
     };
   }
 }

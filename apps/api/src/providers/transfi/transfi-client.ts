@@ -60,6 +60,7 @@ export class TransFiClient {
       method: input.method,
       headers,
       body: input.body !== undefined ? JSON.stringify(input.body) : undefined,
+      signal: AbortSignal.timeout(15_000),
     });
 
     let data: unknown = null;

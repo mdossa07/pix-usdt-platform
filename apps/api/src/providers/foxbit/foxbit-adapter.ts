@@ -1,6 +1,6 @@
 import type { PaymentProvider, CreatePixChargeInput, PixCharge, SettlementLeg, TransferStatusResult } from '../provider-contract.js';
-import { randomUUID } from 'node:crypto';
-import { FoxbitClient } from './foxbit-client.js';
+import { createHash } from 'node:crypto';
+import { FoxbitClient, FoxbitApiError } from './foxbit-client.js';
 import { config } from '../../config.js';
 
 // Response shapes from Foxbit Partner API v3
@@ -40,11 +40,10 @@ export class FoxbitAdapter implements PaymentProvider {
 
   async createPixCharge(input: CreatePixChargeInput, idempotencyKey: string): Promise<PixCharge> {
     if (this.mode === 'mock') {
-      const providerChargeId = `foxbit-mock-${idempotencyKey.slice(-12)}`;
+      const reference = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24);
       return {
-        providerChargeId,
-        copyPaste: `00020126580014BR.GOV.BCB.PIX0136${randomUUID()}520400005303986540${(input.amountBrlCents / 100n).toString().padStart(4, '0')}5802BR5913PIX SPLIT LTDA6008SAO PAULO62070503***6304ABCD`,
-        qrCodeBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jP0gAAAABJRU5ErkJggg==',
+        providerChargeId: `foxbit-mock-${reference}`,
+        copyPaste: `MOCK-PIX-NOT-PAYABLE-foxbit-${reference}`,
         expiresAt: new Date(Date.now() + 30 * 60 * 1000),
       };
     }
@@ -70,7 +69,7 @@ export class FoxbitAdapter implements PaymentProvider {
 
   async getChargeStatus(providerChargeId: string): Promise<'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELED'> {
     if (this.mode === 'mock') {
-      return 'PAID';
+      return 'PENDING';
     }
 
     // Real flow: GET /v3/partners/fiat-gateway/orders/:id
@@ -98,9 +97,9 @@ export class FoxbitAdapter implements PaymentProvider {
     idempotencyKey: string,
   ): Promise<SettlementLeg> {
     if (this.mode === 'mock') {
+      const reference = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24);
       return {
-        providerTransferId: `mock-merchant-${idempotencyKey.slice(-12)}`,
-        txHash: `0x${Buffer.from(idempotencyKey).toString('hex').slice(0, 64)}`,
+        providerTransferId: `mock-merchant-${reference}`,
         status: 'COMPLETED',
       };
     }
@@ -131,9 +130,9 @@ export class FoxbitAdapter implements PaymentProvider {
     idempotencyKey: string,
   ): Promise<SettlementLeg> {
     if (this.mode === 'mock') {
+      const reference = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24);
       return {
-        providerTransferId: `mock-platform-${idempotencyKey.slice(-12)}`,
-        txHash: `0x${Buffer.from(idempotencyKey + ':platform').toString('hex').slice(0, 64)}`,
+        providerTransferId: `mock-platform-${reference}`,
         status: 'COMPLETED',
       };
     }
@@ -163,7 +162,6 @@ export class FoxbitAdapter implements PaymentProvider {
       if (!providerTransferId.startsWith('mock-')) return null;
       return {
         status: 'COMPLETED',
-        txHash: `0x${Buffer.from(providerTransferId).toString('hex').slice(0, 64)}`,
         providerReference: providerTransferId,
       };
     }
@@ -179,9 +177,11 @@ export class FoxbitAdapter implements PaymentProvider {
         txHash: res.tx_hash ?? undefined,
         providerReference: res.id,
       };
-    } catch {
-      // If withdrawal not found or transient error, return null to signal unknown state
-      return null;
+    } catch (error) {
+      if (error instanceof FoxbitApiError && error.status === 404) return null;
+      // Timeout, network failure, authentication error and provider 5xx are ambiguous.
+      // Propagate them so the orchestrator does not blindly submit a second payout.
+      throw error;
     }
   }
 

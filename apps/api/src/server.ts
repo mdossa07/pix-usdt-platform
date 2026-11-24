@@ -50,10 +50,16 @@ function validateAddress(network: string, address: string) {
 
 app.get('/health', async () => ({ status: 'ok', mode: 'mock', foxbitIntegration: 'pending_partner_approval', livePayments: false }));
 app.get('/v1/provider/status', async () => ({
-  provider: 'FOXBIT', enabled: false, adapterReady: false,
-  credentialsConfigured: Boolean(config.FOXBIT_API_KEY && config.FOXBIT_API_SECRET),
-  connection: 'INTEGRATION_PENDING', paymentsMode: 'mock', liveOperationsEnabled: false,
-  pendingApprovals: ['contrato white-label/multiusuário', 'PIX de terceiros associado ao merchant', 'funding da subconta', 'compra/conversão USDT', 'split 98/2 por operação', 'saques HOSTED', 'saque automatizado da comissão'],
+  provider: config.PAYMENT_PROVIDER.toUpperCase(),
+  enabled: false,
+  adapterReady: false,
+  credentialsConfigured: config.PAYMENT_PROVIDER === 'transfi'
+    ? Boolean(config.TRANSFI_USERNAME && config.TRANSFI_PASSWORD && config.TRANSFI_MID && config.TRANSFI_WEBHOOK_SECRET)
+    : Boolean(config.FOXBIT_API_KEY && config.FOXBIT_API_SECRET && config.FOXBIT_WEBHOOK_SECRET),
+  connection: 'INTEGRATION_PENDING',
+  paymentsMode: config.PAYMENTS_MODE,
+  liveOperationsEnabled: false,
+  pendingApprovals: ['aprovação comercial para pagamentos PIX de terceiros', 'confirmação do fluxo de conversão BRL/USDT', 'provisionamento e identificação de beneficiários', 'aprovação de Travel Rule', 'dois payouts USDT independentes por pagamento', 'testes sandbox de falhas parciais e conciliação'],
 }));
 
 const registerSchema = z.object({
@@ -272,11 +278,21 @@ app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async
   const payment = await prisma.payment.findFirst({ where: { id, merchantId: merchant.id } });
   if (!payment) return reply.code(404).send({ error: 'payment_not_found' });
   if (payment.status === PaymentStatus.COMPLETED) return { success: true, status: 'already_completed', mock: true };
+  if (payment.status === PaymentStatus.PIX_CONFIRMED) {
+    await enqueueSettlement(id, payment.amountBrlCents);
+    return { success: true, mock: true, status: 'ENQUEUED', message: 'Confirmação simulada já registrada; liquidação re-enfileirada.' };
+  }
   if (payment.status !== PaymentStatus.PIX_PENDING) return reply.code(409).send({ error: 'payment_not_pending' });
-  // Enqueue async settlement instead of inline mock processing
+  // This endpoint exists only in non-production mock environments. Transition the
+  // payment first so the worker's PIX_CONFIRMED guard cannot silently drop the job.
+  const confirmed = await prisma.payment.updateMany({
+    where: { id, merchantId: merchant.id, status: PaymentStatus.PIX_PENDING },
+    data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+  });
+  if (confirmed.count !== 1) return reply.code(409).send({ error: 'payment_state_changed' });
   await enqueueSettlement(id, payment.amountBrlCents);
-  await audit(request, 'PAYMENT_SETTLEMENT_ENQUEUED', 'PAYMENT', id, { mode: 'mock' });
-  return { success: true, mock: true, status: 'ENQUEUED', message: 'Liquidação assíncrona enfileirada; processe via worker.' };
+  await audit(request, 'PAYMENT_SETTLEMENT_ENQUEUED', 'PAYMENT', id, { mode: 'mock', simulatedPixConfirmation: true });
+  return { success: true, mock: true, status: 'ENQUEUED', message: 'Confirmação PIX simulada; liquidação assíncrona enfileirada. Nenhum pagamento real foi recebido.' };
 });
 
 app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, reply) => {
@@ -643,6 +659,8 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     pixCopyPaste: payment.pixCopyPaste,
     expiresAt: payment.expiresAt?.toISOString(),
     providerOrderId: payment.providerOrderId,
+    mode: 'mock',
+    warning: 'Cobrança criada em modo de demonstração. Não aceite nem envie este código PIX como pagamento real.',
   });
 });
 
