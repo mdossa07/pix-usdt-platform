@@ -172,7 +172,9 @@ export async function sendSignedWebhook(input: {
 }): Promise<WebhookSendResult> {
   if (!input.secret || input.secret.length < 32) throw new Error('invalid_webhook_secret');
   const { url, addresses } = await resolvePublicWebhookTarget(input.endpointUrl, input.dnsResolver);
-  const rawBody = JSON.stringify(input.payload);
+  const serializedBody = JSON.stringify(input.payload);
+  if (typeof serializedBody !== 'string') throw new Error('webhook_payload_not_serializable');
+  const rawBody = serializedBody;
   if (Buffer.byteLength(rawBody, 'utf8') > 256 * 1024) throw new Error('webhook_payload_too_large');
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = buildWebhookSignature(input.secret, timestamp, rawBody);
