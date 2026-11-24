@@ -212,6 +212,7 @@ app.get('/v1/admin/2fa/status', { preHandler: [app.authenticate] }, async (reque
   return {
     enabled: Boolean(user.twoFactorEnabledAt && user.twoFactorSecretEncrypted),
     enabledAt: user.twoFactorEnabledAt,
+    setupPending: Boolean(user.twoFactorPendingSecretEncrypted),
   };
 });
 
