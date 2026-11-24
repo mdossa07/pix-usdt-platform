@@ -287,7 +287,7 @@ app.post('/v1/admin/2fa/enable', {
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_code' });
 
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
-  if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  if (!user || !user.isActive || user.role !== 'SUPER_ADMIN') return reply.code(404).send({ error: 'user_not_found' });
   if (user.twoFactorEnabledAt) return reply.code(409).send({ error: 'two_factor_already_enabled' });
   if (!user.twoFactorPendingSecretEncrypted) return reply.code(409).send({ error: 'two_factor_setup_required' });
 
@@ -301,6 +301,8 @@ app.post('/v1/admin/2fa/enable', {
     const result = await tx.user.updateMany({
       where: {
         id: user.id,
+        isActive: true,
+        role: 'SUPER_ADMIN',
         twoFactorEnabledAt: null,
         twoFactorPendingSecretEncrypted: user.twoFactorPendingSecretEncrypted,
       },
@@ -337,7 +339,7 @@ app.post('/v1/admin/2fa/recovery-codes/regenerate', {
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_recovery_code_regeneration' });
 
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
-  if (!user || !user.isActive || !user.twoFactorEnabledAt || !user.twoFactorSecretEncrypted) {
+  if (!user || !user.isActive || user.role !== 'SUPER_ADMIN' || !user.twoFactorEnabledAt || !user.twoFactorSecretEncrypted) {
     return reply.code(409).send({ error: 'two_factor_not_enabled' });
   }
   if (!(await argon2.verify(user.passwordHash, parsed.data.password))) {
