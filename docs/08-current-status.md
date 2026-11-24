@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**68% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
+**69% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
 
 ## Entregue e integrado no master
 
@@ -21,6 +21,15 @@
 - Sessões de navegador persistidas em `AuthSession` no PostgreSQL, com JTI único, expiração, metadados limitados e revogação centralizada; JWTs sem sessão ativa são rejeitados em cada requisição autenticada.
 - Logout revoga a sessão atual antes de limpar o cookie; o usuário pode listar até 25 sessões ativas, revogar uma sessão específica e encerrar todas as sessões. As operações são registradas na auditoria.
 - O JWT tem validade de duas horas e a sessão no banco compartilha o mesmo prazo. JWTs anteriores à migração não possuem JTI persistido e deixam de ser aceitos após o rollout; exigir novo login.
+
+### Webhooks de saída para comerciantes
+- Até 10 endpoints HTTPS ativos por comerciante, com seleção de eventos, desativação, rotação de segredo e consulta de entregas.
+- Segredos aleatórios fortes guardados cifrados e exibidos somente na criação/rotação.
+- Eventos persistidos no mesmo commit PostgreSQL da criação ou atualização de pagamento, com despachante assíncrono e recuperação de entregas pendentes após reinício.
+- Assinatura HMAC-SHA256 calculada sobre timestamp + corpo JSON bruto; payloads monetários usam strings/centavos inteiros e não incluem CPF, dados do pagador ou endereço completo de carteira.
+- Proteção SSRF: HTTPS/443 obrigatório, DNS validado a cada tentativa, bloqueio de IPs privados/reservados e pinning de IP público, sem seguir redirects.
+- Retentativas limitadas, timeout e resposta limitados; sem promessa de exactly-once. Consumidores devem deduplicar pelo ID do evento.
+- Testes PostgreSQL cobrem subscriptions, payload sem PII e rollback transacional; CI de PR #16 e CI pós-merge passaram.
 
 ### Pagamentos e segurança financeira
 - Criação de pagamentos em modo de demonstração, com código explícito `MOCK-PIX-NOT-PAYABLE`.
@@ -48,7 +57,9 @@
 - PR #10 — TOTP e códigos de recuperação.
 - PR #11 — cookies HttpOnly e proteção CSRF do painel; merge commit `05ce453`.
 - PR #12 — cliente TransFi v3 e testes de contrato; merge commit `88b77a7`.
-- PR #14 — MFA obrigatório em rotas de superadmin; merge commit `5191d19`. CI da branch aprovado; aguardar CI pós-merge no `master`.
+- PR #14 — MFA obrigatório em rotas de superadmin; merge commit `5191d19`.
+- PR #15 — revogação centralizada de sessões de navegador; merge commit `e064947`; CI pós-merge aprovado.
+- PR #16 — webhooks de saída seguros para comerciantes; merge commit `13889a7`; CI pós-merge #373 aprovado.
 
 CI completo aprovado no head do PR #12: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45492613470
 
@@ -63,7 +74,8 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - TransFi v3 exige onboarding de sender/recipient, dados dinâmicos por país/tipo, confirmação do método PIX BRL habilitado para o MID e confirmação de que o modelo permite o cadastro do pagador final. Payin usa userId de sender; payout usa recipient/userId conforme a ordem.
 - Foxbit Partner depende de permissões comerciais específicas. Fiat Gateway no nível do parceiro e funding de sub-member são fluxos distintos; a arquitetura de saldo e os dois withdrawals precisam de aprovação escrita.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
-- Webhooks de saída seguros para sistemas dos comerciantes ainda não foram implementados.
+- Webhooks de saída para comerciantes implementados: endpoints HTTPS gerenciáveis, segredo HMAC cifrado, eventos `payment.created`, `payment.status_changed` e `payment.completed`, outbox transacional PostgreSQL, tentativas persistentes e auditoria de entregas.
+- O dispatcher rejeita redirecionamentos, limita timeout/resposta, revalida DNS por entrega e fixa endereços IP públicos para reduzir SSRF/DNS rebinding. A entrega é at-least-once; comerciantes devem deduplicar pelo ID do evento.
 - TOTP agora é obrigatório para superadministradores; ainda falta documentar um processo multi-pessoa de break-glass.
 - Faltam teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo, processo multi-pessoa de break-glass e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
@@ -76,9 +88,8 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 4. Conectar o cliente v3 ou o fluxo Foxbit Partner homologado ao motor de pagamentos; manter feature flags desabilitadas até sandbox aprovado.
 5. Construir onboarding e checkout dinâmicos para os campos requeridos pelo provedor.
 6. Homologar payin, conversão, merchant payout 98%, platform payout 2%, webhooks, retries, timeouts, falhas parciais, refunds e reconciliação.
-7. Implementar webhooks de saída seguros para comerciantes, com assinaturas, retries e proteção SSRF.
-8. Tornar TOTP obrigatório para superadmins, implementar revogação centralizada de sessão/JTI e concluir E2E, observabilidade, runbooks, pentest e revisão jurídica/regulatória/fiscal.
-9. Liberar produção somente após confirmação independente dos dois payouts, ledger balanceado e reconciliação do saldo do provedor.
+7. Concluir E2E de navegador, observabilidade/alertas, runbooks, processo multi-pessoa de break-glass, pentest externo e revisão jurídica/regulatória/fiscal.
+8. Liberar produção somente após confirmação independente dos dois payouts, ledger balanceado e reconciliação do saldo do provedor.
 
 ## Política operacional
 
