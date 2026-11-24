@@ -232,9 +232,14 @@ app.post('/v1/payments', { preHandler: app.authenticate }, async (request, reply
   const parsed = schema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_payment', details: parsed.error.flatten() });
   const merchant = await merchantFor(request);
+  if (!merchant.isEnabled || merchant.kycStatus !== 'APPROVED') {
+    return reply.code(403).send({ error: 'merchant_not_approved', message: 'A conta precisa estar aprovada e habilitada antes de criar cobranças.' });
+  }
   const wallet = await prisma.walletDestination.findFirst({ where: { id: parsed.data.walletId, merchantId: merchant.id } });
   if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
-  if (wallet.status === WalletStatus.REJECTED || wallet.status === WalletStatus.DISABLED) return reply.code(400).send({ error: 'wallet_not_eligible' });
+  if (wallet.status !== WalletStatus.VERIFIED) {
+    return reply.code(409).send({ error: 'wallet_not_verified', message: 'A carteira precisa ser verificada antes de criar cobranças.' });
+  }
   const externalId = `ps_${randomUUID().replaceAll('-', '')}`;
   const payment = await prisma.payment.create({ data: {
     externalId, merchantId: merchant.id, walletDestinationId: wallet.id,
@@ -608,16 +613,30 @@ app.get('/v1/admin/audit', { preHandler: [app.authenticate] }, async (request, r
 // --- Admin: enable/disable merchants with KYC enforcement ---
 app.patch('/v1/admin/merchants/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
-  const parsed = z.object({ isEnabled: z.boolean() }).strict().safeParse(request.body);
+  const parsed = z.object({
+    isEnabled: z.boolean().optional(),
+    kycStatus: z.enum(['NOT_STARTED', 'PENDING', 'APPROVED', 'REJECTED']).optional(),
+  }).strict().refine(value => value.isEnabled !== undefined || value.kycStatus !== undefined).safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_merchant_update' });
   const { id } = request.params as { id: string };
   const merchant = await prisma.merchant.findUnique({ where: { id } });
   if (!merchant) return reply.code(404).send({ error: 'merchant_not_found' });
-  if (parsed.data.isEnabled && merchant.kycStatus !== 'APPROVED') {
+
+  const nextKycStatus = parsed.data.kycStatus ?? merchant.kycStatus;
+  if (parsed.data.isEnabled === true && nextKycStatus !== 'APPROVED') {
     return reply.code(409).send({ error: 'kyc_approval_required', message: 'O comerciante só pode ser ativado após aprovação KYC.' });
   }
-  const updated = await prisma.merchant.update({ where: { id }, data: { isEnabled: parsed.data.isEnabled } });
-  await audit(request, parsed.data.isEnabled ? 'MERCHANT_ENABLED' : 'MERCHANT_DISABLED', 'MERCHANT', id, { kycStatus: updated.kycStatus });
+
+  const updateData: Prisma.MerchantUpdateInput = {};
+  if (parsed.data.kycStatus !== undefined) updateData.kycStatus = parsed.data.kycStatus;
+  if (parsed.data.isEnabled !== undefined) updateData.isEnabled = parsed.data.isEnabled;
+  if (parsed.data.kycStatus === 'REJECTED' || parsed.data.kycStatus === 'NOT_STARTED') updateData.isEnabled = false;
+
+  const updated = await prisma.merchant.update({ where: { id }, data: updateData });
+  const action = parsed.data.kycStatus
+    ? `MERCHANT_KYC_${parsed.data.kycStatus}`
+    : parsed.data.isEnabled ? 'MERCHANT_ENABLED' : 'MERCHANT_DISABLED';
+  await audit(request, action, 'MERCHANT', id, { previousKycStatus: merchant.kycStatus, kycStatus: updated.kycStatus, isEnabled: updated.isEnabled });
   return { id: updated.id, isEnabled: updated.isEnabled, kycStatus: updated.kycStatus };
 });
 
@@ -643,7 +662,7 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
 
 // --- Protected Merchant Endpoint: Create Payment (HMAC Auth) ---
 const createPaymentSchema = z.object({
-  amountBrlCents: z.number().int().positive(),
+  amountBrlCents: z.number().int().min(500).max(10_000_000),
   walletDestinationId: z.string().min(1),
   externalId: z.string().min(1).max(128).optional(),
   payerName: z.string().min(1).max(200).optional(),
@@ -652,7 +671,7 @@ const createPaymentSchema = z.object({
 });
 
 app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
-  const merchant = (request as any).merchant as { id: string; userId: string };
+  const merchant = (request as any).merchant as { merchantId: string; keyId: string };
   const parsed = createPaymentSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
@@ -660,13 +679,21 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
   const { amountBrlCents, walletDestinationId, externalId, payerName, payerTaxId, description } = parsed.data;
 
   // Validate wallet belongs to merchant
-  const wallet = await prisma.walletDestination.findFirst({ where: { id: walletDestinationId, merchantId: merchant.id } });
+  const merchantRecord = await prisma.merchant.findUnique({ where: { id: merchant.merchantId } });
+  if (!merchantRecord?.isEnabled || merchantRecord.kycStatus !== 'APPROVED') {
+    return reply.code(403).send({ error: 'merchant_not_approved', message: 'The merchant must be KYC-approved and enabled before creating PIX charges.' });
+  }
+  const wallet = await prisma.walletDestination.findFirst({ where: { id: walletDestinationId, merchantId: merchant.merchantId } });
   if (!wallet) {
     return reply.code(400).send({ error: 'invalid_wallet', message: 'Wallet not found or does not belong to merchant' });
   }
+  if (wallet.status !== WalletStatus.VERIFIED) {
+    return reply.code(409).send({ error: 'wallet_not_verified', message: 'The destination wallet must be verified before creating PIX charges.' });
+  }
 
   const paymentExternalId = externalId || randomUUID();
-  const existing = await prisma.payment.findFirst({ where: { merchantId: merchant.id, externalId: paymentExternalId } });
+  const existing = await prisma.payment.findUnique({ where: { externalId: paymentExternalId } });
+  if (existing && existing.merchantId !== merchant.merchantId) return reply.code(409).send({ error: 'external_id_conflict' });
   if (existing) {
     return reply.code(200).send({
       paymentId: existing.id,
@@ -693,13 +720,14 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
       memo: destWallet.tagEncrypted ? decryptPii(destWallet.tagEncrypted) : undefined,
       exchangeName: destWallet.exchangeName,
       holderName: destWallet.holderName,
+      holderTaxId: destWallet.holderTaxIdEncrypted ? decryptPii(destWallet.holderTaxIdEncrypted) : undefined,
     },
   }, paymentExternalId);
 
   // Conversion and 98/2 split happen only after a verified PIX confirmation.
   const payment = await prisma.payment.create({
     data: {
-      merchantId: merchant.id,
+      merchantId: merchant.merchantId,
       walletDestinationId,
       externalId: paymentExternalId,
       amountBrlCents: BigInt(amountBrlCents),
@@ -723,7 +751,7 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
   return reply.code(201).send({
     paymentId: payment.id,
     externalId: payment.externalId,
-    amountBrlCents: Number(payment.amountBrlCents),
+    amountBrlCents: payment.amountBrlCents.toString(),
     usdtAmount: null,
     merchantNetUsdt: null,
     commissionUsdt: null,

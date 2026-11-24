@@ -91,6 +91,11 @@ export async function hmacAuthMiddleware(
     return;
   }
 
+  if (apiKey.merchant.kycStatus !== 'APPROVED') {
+    void reply.code(403).send({ error: 'merchant_kyc_not_approved' });
+    return;
+  }
+
   // Use rawBody buffer directly — never re-serialize JSON
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
   const rawBody = raw ? raw.toString('utf8') : '';
