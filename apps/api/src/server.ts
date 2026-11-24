@@ -28,9 +28,10 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
+const APP_ORIGIN = new URL(config.APP_URL).origin;
 
 await app.register(helmet);
-await app.register(cors, { origin: config.APP_URL, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-csrf-token'] });
+await app.register(cors, { origin: APP_ORIGIN, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-csrf-token'] });
 await app.register(rateLimit, { max: 80, timeWindow: '1 minute' });
 await app.register(jwt, { secret: config.JWT_SECRET, sign: { expiresIn: '2h' } });
 await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
@@ -76,7 +77,7 @@ app.decorate('authenticate', async (request, reply) => {
     const suppliedCsrf = request.headers['x-csrf-token'];
     const validCsrf = isValidCsrfRequest({
       origin: request.headers.origin,
-      expectedOrigin: config.APP_URL,
+      expectedOrigin: APP_ORIGIN,
       expectedToken: (request.user as { csrfToken?: string }).csrfToken,
       suppliedToken: typeof suppliedCsrf === 'string' ? suppliedCsrf : undefined,
     });
