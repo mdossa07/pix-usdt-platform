@@ -11,6 +11,7 @@ interface Wallet {
   networkCode: string;
   address: string;
   status: string;
+  isVerified: boolean;
   isDefault: boolean;
   walletType: 'HOSTED' | 'SELF_HOSTED';
   holderName: string;
@@ -519,7 +520,7 @@ export default function MerchantDashboard() {
                       <p className="mt-1 font-mono text-xs text-slate-500">{wallet.networkCode.toUpperCase()} · {maskedAddress(wallet.address)}</p>
                       <p className="mt-1 text-xs text-slate-500">Titular: {wallet.holderName} · {wallet.walletType === 'HOSTED' ? 'Corretora / VASP' : 'Self-hosted'}</p>
                     </div>
-                    <div className="flex shrink-0 gap-2">{!wallet.isDefault && wallet.status === 'VERIFIED' && <button onClick={() => setDefaultWallet(wallet.id)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Tornar padrão</button>}{wallet.status !== 'DISABLED' && <button onClick={() => disableWallet(wallet.id)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-red-200 hover:text-red-700">Desativar</button>}</div>
+                    <div className="flex shrink-0 gap-2">{!wallet.isDefault && wallet.status === 'VERIFIED' && wallet.isVerified && <button onClick={() => setDefaultWallet(wallet.id)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">Tornar padrão</button>}{wallet.status !== 'DISABLED' && <button onClick={() => disableWallet(wallet.id)} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 hover:border-red-200 hover:text-red-700">Desativar</button>}</div>
                   </div>)}
                 </div>
               )}
