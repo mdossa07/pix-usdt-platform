@@ -13,8 +13,9 @@ export default function RegisterPage() {
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setLoading(true);
     try {
-      const result = await apiRequest<{ token: string; user: { role: string } }>('/v1/auth/register', { method:'POST', body: JSON.stringify(form) });
-      localStorage.setItem('pixsplit_token', result.token);
+      const result = await apiRequest<{ csrfToken: string; user: { role: string } }>('/v1/auth/register', { method:'POST', body: JSON.stringify(form) });
+      sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+      localStorage.setItem('pixsplit_authenticated', '1');
       window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
     } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível criar a conta.'); }
     finally { setLoading(false); }
