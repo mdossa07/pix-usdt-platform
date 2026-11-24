@@ -21,7 +21,9 @@ function ipv4Bytes(address: string): number[] | null {
 function isPublicIpv4(address: string): boolean {
   const parts = ipv4Bytes(address);
   if (!parts) return false;
-  const [a, b, c] = parts;
+  const a = parts[0] ?? 0;
+  const b = parts[1] ?? 0;
+  const c = parts[2] ?? 0;
   if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
   if (a === 100 && b >= 64 && b <= 127) return false;
   if (a === 169 && b === 254) return false;
@@ -40,11 +42,13 @@ function ipv6BigInt(address: string): bigint | null {
   let value = address.toLowerCase();
   const ipv4Match = value.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
   if (ipv4Match) {
-    const bytes = ipv4Bytes(ipv4Match[1]);
+    const embeddedIpv4 = ipv4Match[1];
+    if (!embeddedIpv4) return null;
+    const bytes = ipv4Bytes(embeddedIpv4);
     if (!bytes) return null;
-    const first = ((bytes[0] << 8) | bytes[1]).toString(16);
-    const second = ((bytes[2] << 8) | bytes[3]).toString(16);
-    value = value.slice(0, -ipv4Match[1].length) + first + ':' + second;
+    const first = (((bytes[0] ?? 0) << 8) | (bytes[1] ?? 0)).toString(16);
+    const second = (((bytes[2] ?? 0) << 8) | (bytes[3] ?? 0)).toString(16);
+    value = value.slice(0, -embeddedIpv4.length) + first + ':' + second;
   }
 
   const halves = value.split('::');
@@ -179,6 +183,7 @@ export async function sendSignedWebhook(input: {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = buildWebhookSignature(input.secret, timestamp, rawBody);
   const chosen = addresses[0];
+  if (!chosen) throw new Error('webhook_host_resolution_failed');
 
   return new Promise((resolve, reject) => {
     let responseBytes = 0;
