@@ -531,6 +531,66 @@ app.get('/v1/merchant/history/export', { preHandler: [app.authenticate] }, async
   return csvHeader + rows;
 });
 
+// --- Admin: wallet verification queue ---
+app.get('/v1/admin/wallets', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const wallets = await prisma.walletDestination.findMany({
+    include: { merchant: { include: { user: { select: { email: true } } } } },
+    orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
+    take: 500,
+  });
+  return wallets.map(wallet => ({
+    id: wallet.id,
+    label: wallet.label,
+    exchangeName: wallet.exchangeName,
+    networkCode: wallet.networkCode,
+    addressLast8: wallet.addressLast8,
+    walletType: wallet.walletType,
+    holderName: wallet.holderName,
+    holderCountry: wallet.holderCountry,
+    vaspEntityCountry: wallet.vaspEntityCountry,
+    status: wallet.status,
+    isDefault: wallet.isDefault,
+    createdAt: wallet.createdAt,
+    merchant: {
+      id: wallet.merchant.id,
+      legalName: wallet.merchant.legalName,
+      email: wallet.merchant.user.email,
+      kycStatus: wallet.merchant.kycStatus,
+      isEnabled: wallet.merchant.isEnabled,
+    },
+  }));
+});
+
+app.patch('/v1/admin/wallets/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const parsed = z.object({ status: z.enum(['VERIFIED', 'REJECTED']) }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_wallet_review' });
+  const { id } = request.params as { id: string };
+  const wallet = await prisma.walletDestination.findUnique({
+    where: { id },
+    include: { merchant: true },
+  });
+  if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
+  if (parsed.data.status === 'VERIFIED' && (!wallet.merchant.isEnabled || wallet.merchant.kycStatus !== 'APPROVED')) {
+    return reply.code(409).send({ error: 'merchant_approval_required', message: 'A conta do comerciante precisa estar aprovada antes da carteira.' });
+  }
+  const updated = await prisma.walletDestination.update({
+    where: { id },
+    data: {
+      status: parsed.data.status,
+      isVerified: parsed.data.status === 'VERIFIED',
+    },
+  });
+  await audit(request, `WALLET_${parsed.data.status}`, 'WALLET_DESTINATION', id, {
+    merchantId: wallet.merchantId,
+    networkCode: wallet.networkCode,
+    previousStatus: wallet.status,
+    status: updated.status,
+  });
+  return { id: updated.id, status: updated.status, isVerified: updated.isVerified };
+});
+
 // --- Admin: List Merchants ---
 app.get('/v1/admin/merchants', { preHandler: [app.authenticate] }, async (request, reply) => {
   const user = (request as any).user;
@@ -647,11 +707,20 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
   const { id } = request.params as { id: string };
   const payment = await prisma.payment.findUnique({ where: { id } });
   if (!payment) return reply.code(404).send({ error: 'not_found' });
-  const resumableStatuses: PaymentStatus[] = [PaymentStatus.FAILED, PaymentStatus.UNDER_REVIEW];
-  const resumable = resumableStatuses.includes(payment.status)
-    && payment.providerGrossUsdt !== null
-    && payment.merchantNetUsdt !== null
-    && payment.commissionUsdt !== null;
+  const resumableStatuses: PaymentStatus[] = [
+    PaymentStatus.CONVERSION_PENDING,
+    PaymentStatus.CRYPTO_CREDITED,
+    PaymentStatus.COMMISSION_TRANSFER_PENDING,
+    PaymentStatus.MERCHANT_PAYOUT_PENDING,
+    PaymentStatus.PLATFORM_PAYOUT_PENDING,
+    PaymentStatus.FAILED,
+    PaymentStatus.UNDER_REVIEW,
+  ];
+  const resumable = payment.status === PaymentStatus.PIX_CONFIRMED
+    || (resumableStatuses.includes(payment.status)
+      && payment.providerGrossUsdt !== null
+      && payment.merchantNetUsdt !== null
+      && payment.commissionUsdt !== null);
   if (!resumable) {
     return reply.code(400).send({ error: 'invalid_state', message: 'Only converted payments with a recoverable payout state can be reconciled' });
   }

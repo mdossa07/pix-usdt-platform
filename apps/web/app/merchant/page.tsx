@@ -162,6 +162,12 @@ export default function MerchantDashboard() {
   const [keyName, setKeyName] = useState('Integração principal');
   const [keySubmitting, setKeySubmitting] = useState(false);
   const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentWalletId, setPaymentWalletId] = useState('');
+  const [paymentDescription, setPaymentDescription] = useState('');
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [createdCheckout, setCreatedCheckout] = useState<string | null>(null);
 
   const loadData = useCallback(async (authToken: string) => {
     setLoading(true);
@@ -274,6 +280,41 @@ export default function MerchantDashboard() {
     }
   };
 
+  const createPayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token) return;
+    const amount = Number(paymentAmount.replace(',', '.'));
+    const wallet = wallets.find(item => item.id === paymentWalletId);
+    if (!Number.isFinite(amount) || amount < 5 || amount > 100000 || !wallet || wallet.status !== 'VERIFIED') {
+      setNotice('Informe um valor entre R$ 5,00 e R$ 100.000,00 e selecione uma carteira verificada.');
+      return;
+    }
+    setPaymentSubmitting(true);
+    setNotice(null);
+    setCreatedCheckout(null);
+    try {
+      const result = await apiRequest<{ externalId: string; mode: string; warning?: string }>(
+        '/v1/payments',
+        { method: 'POST', body: JSON.stringify({
+          amountBrlCents: Math.round(amount * 100),
+          walletId: paymentWalletId,
+          description: paymentDescription.trim() || undefined,
+        }) },
+        token,
+      );
+      setCreatedCheckout(result.externalId);
+      setPaymentAmount('');
+      setPaymentDescription('');
+      setShowPaymentForm(false);
+      setNotice(result.warning ?? 'Cobrança criada.');
+      await loadData(token);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Não foi possível criar a cobrança.');
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
+
   const createApiKey = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!token) return;
@@ -382,7 +423,9 @@ export default function MerchantDashboard() {
           ))}
         </nav>
 
+        {dashboard.mode === 'mock' && <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><strong>Ambiente de demonstração:</strong> os códigos PIX gerados não recebem pagamentos reais. Conversão e repasses USDT estão bloqueados até a homologação do provedor.</div>}
         {notice && <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">{notice}</div>}
+        {createdCheckout && <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><span className="text-sm text-slate-700">Checkout criado: <code className="font-mono text-xs">{createdCheckout}</code></span><a className="text-sm font-medium text-slate-900 underline" href={`/checkout/${encodeURIComponent(createdCheckout)}`}>Abrir checkout</a></div>}
 
         {activeTab === 'overview' && (
           <section className="space-y-6">
@@ -411,7 +454,14 @@ export default function MerchantDashboard() {
 
         {activeTab === 'operations' && (
           <section className="space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold text-slate-900">Histórico de operações</h2><p className="mt-1 text-sm text-slate-500">Acompanhe separadamente o repasse de 98% e a taxa de 2%.</p></div><button onClick={exportCsv} disabled={payments.length === 0} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Exportar CSV</button></div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold text-slate-900">Histórico de operações</h2><p className="mt-1 text-sm text-slate-500">Acompanhe separadamente o repasse de 98% e a taxa de 2%.</p></div><div className="flex gap-2"><button onClick={() => { setShowPaymentForm(value => !value); setCreatedCheckout(null); }} disabled={!dashboard.merchant.isEnabled || dashboard.merchant.kycStatus !== 'APPROVED' || !wallets.some(wallet => wallet.status === 'VERIFIED')} className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{showPaymentForm ? 'Fechar' : 'Nova cobrança PIX'}</button><button onClick={exportCsv} disabled={payments.length === 0} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Exportar CSV</button></div></div>
+            {showPaymentForm && <form onSubmit={createPayment} className="grid grid-cols-1 gap-4 rounded-lg border border-slate-200 bg-white p-5 md:grid-cols-2">
+              <label className="text-sm text-slate-700">Valor da cobrança (BRL)<input required type="number" min="5" max="100000" step="0.01" value={paymentAmount} onChange={event => setPaymentAmount(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="150,00" /></label>
+              <label className="text-sm text-slate-700">Carteira de recebimento<select required value={paymentWalletId} onChange={event => setPaymentWalletId(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"><option value="">Selecione uma carteira verificada</option>{wallets.filter(wallet => wallet.status === 'VERIFIED').map(wallet => <option key={wallet.id} value={wallet.id}>{wallet.label} · {wallet.networkCode.toUpperCase()}</option>)}</select></label>
+              <label className="text-sm text-slate-700 md:col-span-2">Descrição (opcional)<input maxLength={120} value={paymentDescription} onChange={event => setPaymentDescription(event.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Pedido ou referência" /></label>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 md:col-span-2">Esta cobrança será criada em modo de demonstração. O código PIX não é pagável e não deve ser enviado a clientes para cobrança real.</div>
+              <div className="flex justify-end md:col-span-2"><button disabled={paymentSubmitting} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{paymentSubmitting ? 'Criando…' : 'Criar cobrança de demonstração'}</button></div>
+            </form>}
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               {payments.length === 0 ? <div className="px-5 py-12 text-center text-sm text-slate-500">Nenhuma operação encontrada.</div> : (
                 <div className="overflow-x-auto">

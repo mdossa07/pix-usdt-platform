@@ -38,13 +38,36 @@ interface AuditEntry {
   createdAt: string;
 }
 
-type Tab = 'overview' | 'merchants' | 'reconciliation' | 'audit';
+interface WalletReviewRecord {
+  id: string;
+  label: string;
+  exchangeName: string;
+  networkCode: string;
+  addressLast8: string;
+  walletType: string;
+  holderName: string;
+  holderCountry: string;
+  vaspEntityCountry: string | null;
+  status: string;
+  isDefault: boolean;
+  createdAt: string;
+  merchant: {
+    id: string;
+    legalName: string;
+    email: string;
+    kycStatus: string;
+    isEnabled: boolean;
+  };
+}
+
+type Tab = 'overview' | 'merchants' | 'wallets' | 'reconciliation' | 'audit';
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('overview');
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [merchants, setMerchants] = useState<MerchantRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
+  const [wallets, setWallets] = useState<WalletReviewRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -60,11 +83,13 @@ export default function AdminDashboard() {
       apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
       apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
       apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
+      apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
     ])
-      .then(([p, m, a]) => {
+      .then(([p, m, a, w]) => {
         setPayments(p);
         setMerchants(m);
         setAuditLogs(a);
+        setWallets(w);
       })
       .catch((err) => setError(err.message ?? 'Falha ao carregar dados'))
       .finally(() => setLoading(false));
@@ -110,6 +135,42 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleMerchantKyc = async (merchantId: string, kycStatus: 'APPROVED' | 'REJECTED') => {
+    const message = kycStatus === 'APPROVED'
+      ? 'Confirma que concluiu a análise documental e verificou a identidade e a titularidade deste comerciante?'
+      : 'Confirma que a análise documental foi concluída e o cadastro deve ser rejeitado?';
+    if (!window.confirm(message)) return;
+    try {
+      await apiRequest(`/v1/admin/merchants/${merchantId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ kycStatus }),
+      }, token!);
+      setMerchants(prev => prev.map(merchant => merchant.id === merchantId
+        ? { ...merchant, kycStatus, isEnabled: kycStatus === 'REJECTED' ? false : merchant.isEnabled }
+        : merchant));
+      setAuditLogs(await apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token!));
+    } catch (err) {
+      alert(`Erro ao atualizar KYC: ${(err as Error).message}`);
+    }
+  };
+
+  const handleWalletReview = async (walletId: string, status: 'VERIFIED' | 'REJECTED') => {
+    const message = status === 'VERIFIED'
+      ? 'Confirma que verificou a titularidade, a rede e os dados da carteira fora do sistema?'
+      : 'Confirma a rejeição desta carteira após a análise?';
+    if (!window.confirm(message)) return;
+    try {
+      await apiRequest(`/v1/admin/wallets/${walletId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }, token!);
+      setWallets(prev => prev.map(wallet => wallet.id === walletId ? { ...wallet, status } : wallet));
+      setAuditLogs(await apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token!));
+    } catch (err) {
+      alert(`Erro ao revisar carteira: ${(err as Error).message}`);
+    }
+  };
+
   const exportCsv = () => {
     const header = 'ID Externo,Status,Valor PIX,Comissão USDT,Merchant Net,Transfer Merchant,Transfer Platform,Criado Em\n';
     const rows = payments.map(p =>
@@ -127,6 +188,7 @@ export default function AdminDashboard() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'merchants', label: 'Comerciantes' },
+    { id: 'wallets', label: 'Carteiras' },
     { id: 'reconciliation', label: 'Conciliação' },
     { id: 'audit', label: 'Auditoria' },
   ];
@@ -273,14 +335,24 @@ export default function AdminDashboard() {
                       }`}>{m.isEnabled ? 'Ativo' : 'Inativo'}</span>
                     </td>
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleToggleMerchant(m.id, m.isEnabled)}
-                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                          m.isEnabled ? 'bg-red-50 text-red-700 hover:bg-red-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                        }`}
-                      >
-                        {m.isEnabled ? 'Desativar' : 'Ativar'}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          disabled={!m.isEnabled && m.kycStatus !== 'APPROVED'}
+                          onClick={() => handleToggleMerchant(m.id, m.isEnabled)}
+                          title={!m.isEnabled && m.kycStatus !== 'APPROVED' ? 'Aprovação KYC necessária' : undefined}
+                          className={`rounded border px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                            m.isEnabled ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                          }`}
+                        >
+                          {m.isEnabled ? 'Desativar' : 'Ativar'}
+                        </button>
+                        {m.kycStatus !== 'APPROVED' && m.kycStatus !== 'REJECTED' && (
+                          <>
+                            <button onClick={() => handleMerchantKyc(m.id, 'APPROVED')} className="rounded border border-emerald-200 bg-white px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50">Aprovar KYC</button>
+                            <button onClick={() => handleMerchantKyc(m.id, 'REJECTED')} className="rounded border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50">Rejeitar</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -290,7 +362,66 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {tab === 'reconciliation' && (
+{tab === 'wallets' && (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            A aprovação aqui registra uma decisão administrativa. Antes de aprovar, confirme fora do PixSplit a titularidade, o endereço completo, a rede, o memo/tag quando aplicável e os requisitos do provedor/Travel Rule.
+          </div>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            {wallets.length === 0 ? (
+              <div className="px-6 py-12 text-center text-sm text-slate-500">Nenhuma carteira cadastrada.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-5 py-4">Comerciante</th>
+                      <th className="px-5 py-4">Carteira</th>
+                      <th className="px-5 py-4">Rede / destino</th>
+                      <th className="px-5 py-4">Titular</th>
+                      <th className="px-5 py-4">KYC / status</th>
+                      <th className="px-5 py-4">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {wallets.map(wallet => (
+                      <tr key={wallet.id}>
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-slate-900">{wallet.merchant.legalName}</p>
+                          <p className="mt-1 text-xs text-slate-500">{wallet.merchant.email}</p>
+                        </td>
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-slate-800">{wallet.label}</p>
+                          <p className="mt-1 text-xs text-slate-500">{wallet.exchangeName} · {wallet.walletType}</p>
+                        </td>
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-slate-800">{wallet.networkCode.toUpperCase()}</p>
+                          <p className="font-mono text-xs text-slate-500">••••{wallet.addressLast8}</p>
+                        </td>
+                        <td className="px-5 py-4 text-slate-700">{wallet.holderName}</td>
+                        <td className="px-5 py-4">
+                          <p className="text-xs text-slate-600">KYC {wallet.merchant.kycStatus}</p>
+                          <span className={`mt-1 inline-flex rounded border px-2 py-1 text-xs ${wallet.status === 'VERIFIED' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : wallet.status === 'REJECTED' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>{wallet.status}</span>
+                        </td>
+                        <td className="px-5 py-4">
+                          {wallet.status !== 'DISABLED' && wallet.status !== 'VERIFIED' && (
+                            <div className="flex gap-2">
+                              <button onClick={() => handleWalletReview(wallet.id, 'VERIFIED')} disabled={wallet.merchant.kycStatus !== 'APPROVED' || !wallet.merchant.isEnabled} className="rounded border border-emerald-200 bg-white px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40">Verificar</button>
+                              <button onClick={() => handleWalletReview(wallet.id, 'REJECTED')} className="rounded border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50">Rejeitar</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+            {tab === 'reconciliation' && (
         <div className="space-y-4">
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
             <p className="text-amber-700 text-sm font-medium">
