@@ -22,5 +22,6 @@ A empresa não deve receber, custodiar, converter ou transferir recursos de terc
 - O segredo de 160 bits é cifrado com AES-256-GCM antes de ser persistido. O status administrativo nunca devolve o segredo.
 - O login exige senha e, quando TOTP estiver ativo, um desafio de cinco minutos mais código de seis dígitos.
 - O código validado é consumido atomicamente no PostgreSQL; o mesmo passo não pode autenticar duas tentativas.
+- A ativação emite dez códigos de recuperação aleatórios de 128 bits. Cada hash SHA-256 é armazenado separadamente, o uso é atômico e o texto aberto só é exibido na ativação.
 - O setup só é considerado concluído depois da confirmação do primeiro código.
 - Antes de produção, todos os superadministradores devem estar com TOTP ativado. Recomenda-se manter um procedimento de recuperação administrativa fora de banda, com aprovação dupla.
