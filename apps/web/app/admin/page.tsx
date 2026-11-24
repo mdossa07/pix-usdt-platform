@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
 import { buildCsv } from '../../lib/csv';
-import { calculateSettledCommission, countActionablePayments } from '../../lib/admin-metrics';
+import { calculateSettledCommissionUnits, countActionablePayments, formatUsdtUnits } from '../../lib/admin-metrics';
 
 interface PaymentRecord {
   id: string;
@@ -120,7 +120,7 @@ export default function AdminDashboard() {
     }
   };
 
-  const totalCommission = calculateSettledCommission(payments);
+  const totalCommission = calculateSettledCommissionUnits(payments);
   const completedCount = payments.filter(p => p.status === 'COMPLETED').length;
   const stuckPayments = countActionablePayments(payments);
 
@@ -239,7 +239,7 @@ export default function AdminDashboard() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Comissão liquidada</p>
-              <p className="text-2xl font-bold text-emerald-700">{totalCommission.toFixed(4)} USDT</p>
+              <p className="text-2xl font-bold text-emerald-700">{formatUsdtUnits(totalCommission)} USDT</p>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Transações Totais</p>
