@@ -24,6 +24,7 @@ export default function HomePage() {
       .catch(() => {
         if (!active) return;
         localStorage.removeItem('pixsplit_authenticated');
+        localStorage.removeItem('pixsplit_token');
         sessionStorage.removeItem('pixsplit_csrf');
         setMessage('Sua sessão expirou. Redirecionando para o acesso…');
         window.location.replace('/login');
