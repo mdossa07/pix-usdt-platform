@@ -42,7 +42,7 @@ pnpm dev                      # Start API + Web in watch mode
 
 ## Security Hardening
 - **PII Encryption**: All sensitive fields (wallet addresses, tax IDs) encrypted with AES-256-GCM before storage.
-- **HMAC Auth**: Merchant API requests signed with HMAC-SHA256; timestamp validation prevents replay.
+- **HMAC Auth**: Merchant API requests use HMAC-SHA256 with the original random secret; the database stores a SHA-256 consistency hash plus an AES-256-GCM encrypted copy. A database-only disclosure of `keyHash` cannot forge signatures. Timestamp validation rejects stale requests; it is not a complete replay defense inside the five-minute window, so merchant integrations must use stable external IDs and the API must enforce idempotency.
 - **Webhook Signature**: Verified against raw body using constant-time comparison.
 - **Rate Limiting**: IP-based on public routes; identity-based on authenticated routes.
 - **CORS**: Restricted to known frontend origins in production.
@@ -66,3 +66,6 @@ pnpm dev                      # Start API + Web in watch mode
 - **Travel Rule**: Not yet automated; manual declaration required for large withdrawals.
 - **Multi-currency**: Only BRL→USDT supported currently.
 - **Webhook Retries**: Foxbit retries webhooks up to 3 times; our idempotency handles duplicates safely.
+## Merchant API key storage change
+
+The current schema adds nullable `MerchantApiKey.signingSecretEncrypted`. Deploy the schema change before deploying the new API code. Existing key rows without this value are intentionally rejected with `api_key_rotation_required`; merchants must create replacement keys and update their integrations, then revoke the old keys. Keep `PII_ENCRYPTION_KEY` in a separate secret manager and back it up securely: losing it makes encrypted API signing secrets and other encrypted personal data unrecoverable. Do not reuse the database backup as the only copy of this key.

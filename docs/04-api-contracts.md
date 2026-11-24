@@ -33,6 +33,22 @@ Retorna JWT com validade de 2 horas. O frontend de desenvolvimento armazena o to
 
 Retorna identidade e estado do merchant autenticado.
 
+## Autenticação de API para merchants (HMAC)
+
+As rotas de integração merchant-to-server usam os cabeçalhos:
+
+- `x-pixsplit-key-id`: UUID da chave gerada no painel.
+- `x-pixsplit-timestamp`: timestamp Unix em milissegundos.
+- `x-pixsplit-signature`: HMAC-SHA256 em hexadecimal minúsculo.
+
+A assinatura é calculada sobre os bytes UTF-8 exatos do corpo e o caminho sem query string:
+
+```text
+METHOD\nPATH\nTIMESTAMP\nRAW_BODY
+```
+
+Calcule `HMAC-SHA256(secret, signingString)`. O segredo é exibido somente na criação; em repouso, a API guarda um hash de consistência e o segredo cifrado com AES-256-GCM. O hash sozinho não é suficiente para assinar chamadas. Chaves antigas sem segredo cifrado são recusadas e precisam ser substituídas. O timestamp fora da janela de cinco minutos é recusado; clientes também devem usar IDs externos estáveis para operações idempotentes.
+
 ## Carteiras
 
 ### `GET /v1/wallets`
