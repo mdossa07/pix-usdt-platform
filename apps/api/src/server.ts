@@ -117,7 +117,7 @@ app.get('/v1/me', { preHandler: app.authenticate }, async (request, reply) => {
 app.get('/v1/wallets', { preHandler: app.authenticate }, async (request) => {
   const merchant = await merchantFor(request);
   const wallets = await prisma.walletDestination.findMany({ where: { merchantId: merchant.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }] });
-  return wallets.map(w => ({ id: w.id, label: w.label, exchangeName: w.exchangeName, networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), address: `${decryptPii(w.addressEncrypted).slice(0, 6)}…${w.addressLast8}`, hasTag: Boolean(w.tagEncrypted), walletType: w.walletType, status: w.status, holderName: w.holderName, holderCountry: w.holderCountry, isDefault: w.isDefault, createdAt: w.createdAt }));
+  return wallets.map(w => ({ id: w.id, label: w.label, exchangeName: w.exchangeName, networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), address: `${decryptPii(w.addressEncrypted).slice(0, 6)}…${w.addressLast8}`, hasTag: Boolean(w.tagEncrypted), walletType: w.walletType, status: w.status, isVerified: w.isVerified, holderName: w.holderName, holderCountry: w.holderCountry, isDefault: w.isDefault, createdAt: w.createdAt }));
 });
 
 app.post('/v1/wallets', { preHandler: app.authenticate }, async (request, reply) => {
