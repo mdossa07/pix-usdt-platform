@@ -71,6 +71,17 @@ Do not mark the baseline as applied on an empty database. A fresh database must 
 - **RBAC**: Administrative endpoints require the appropriate privileged role; merchant operations are scoped to the authenticated merchant.
 - **Audit Trail**: State-changing operations are recorded in `AuditEvent`.
 
+## Browser session security
+
+- The browser never receives the authenticated JWT in JSON and never stores it in `localStorage`.
+- Login, registration and successful TOTP verification issue a `pixsplit_session` cookie with `HttpOnly`, `Path=/`, a two-hour lifetime and `SameSite=Lax` in development. Production uses `SameSite=None; Secure` because the web and API origins may be separate.
+- The cookie is host-only for the API host. The web client must call the API with `credentials: 'include'`; the API must allow only the configured `APP_URL` origin with credentials.
+- The signed session JWT contains a random CSRF token claim. Authenticated browser writes require the matching `x-csrf-token` header and an `Origin` exactly matching the configured application origin. The token is returned separately from the JWT and held in `sessionStorage`; it is not an authentication credential.
+- `GET /v1/auth/csrf` lets a newly opened tab recover the same CSRF token from the signed session cookie without rotating the cookie and invalidating other tabs.
+- Logout clears the browser cookie. The JWT expires after two hours, and every authenticated request rechecks that the user is active and still has the current database role.
+- Legacy bearer JWT authorization remains accepted for compatibility. Merchant integrations should continue using HMAC API keys and nonce anti-replay, not browser cookies.
+- Production must use HTTPS for both web and API origins. Configure `APP_URL` as the exact browser origin (scheme + host, without a path) and configure `NEXT_PUBLIC_API_URL` as the HTTPS API base URL.
+
 ## Provider webhook recovery
 
 Foxbit and TransFi events are keyed by provider plus provider event ID. The API stores a SHA-256 fingerprint of the authenticated raw payload and rejects a different body under an existing event ID. For legacy rows created before payload fingerprints existed, the service decrypts the stored original body, verifies an exact match and then backfills the fingerprint; unverifiable or mismatched rows fail closed. PostgreSQL leases prevent concurrent claims and can be reclaimed after 60 seconds. A worker with a replaced lease token cannot mark the newer claim complete. Unresolved events return HTTP 503 with `Retry-After`; confirm each provider's retry behavior in sandbox before production.
