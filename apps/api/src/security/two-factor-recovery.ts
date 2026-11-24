@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
-const RECOVERY_CODE_BYTES = 8;
+const RECOVERY_CODE_BYTES = 16;
 const DEFAULT_RECOVERY_CODE_COUNT = 10;
 
 export function generateRecoveryCodes(count = DEFAULT_RECOVERY_CODE_COUNT): string[] {
@@ -12,7 +12,7 @@ export function generateRecoveryCodes(count = DEFAULT_RECOVERY_CODE_COUNT): stri
 }
 
 export function isRecoveryCode(value: string): boolean {
-  return /^[A-F0-9]{16}$/.test(value.toUpperCase());
+  return /^[A-F0-9]{32}$/.test(value.toUpperCase());
 }
 
 export function hashRecoveryCode(value: string): string {
