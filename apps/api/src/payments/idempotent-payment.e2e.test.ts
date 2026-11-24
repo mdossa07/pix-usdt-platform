@@ -15,6 +15,7 @@ async function createInput(idempotencyKey: string, amountBrlCents = 5_000) {
     actorUserId: userId,
     walletDestinationId: walletId,
     amountBrlCents,
+    commissionBps: 200,
     description: 'Integration test payment',
     idempotencyKey,
     ipAddress: '127.0.0.1',
