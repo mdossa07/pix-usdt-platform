@@ -39,7 +39,7 @@ Valida o código TOTP de seis dígitos e retorna o JWT normal. O desafio e o có
 
 ### `GET /v1/admin/2fa/status`, `POST /v1/admin/2fa/setup`, `POST /v1/admin/2fa/enable`
 
-Apenas `SUPER_ADMIN`. O setup retorna uma chave de 160 bits e a URI `otpauth` para cadastro manual em um aplicativo autenticador. A chave pendente é cifrada no banco; o endpoint de status nunca revela segredo. Para ativar, envie `{ "code": "123456" }` a `POST /v1/admin/2fa/enable`. O TOTP usa SHA-1, seis dígitos e período de 30 segundos, com tolerância de um passo de relógio. O código de confirmação é marcado como consumido e não pode ser reutilizado.
+Apenas `SUPER_ADMIN`. O setup exige a senha atual e retorna uma chave de 160 bits e a URI `otpauth` para cadastro manual em um aplicativo autenticador. A chave pendente é cifrada no banco; o endpoint de status nunca revela segredo. Para ativar, envie `{ "code": "123456" }` a `POST /v1/admin/2fa/enable`. O TOTP usa SHA-1, seis dígitos e período de 30 segundos, com tolerância de um passo de relógio. O código de confirmação é marcado como consumido e não pode ser reutilizado.
 
 O JWT de desenvolvimento continua armazenado no `localStorage`; antes de produção, migrar para cookie HttpOnly/Secure/SameSite ou BFF.
 
