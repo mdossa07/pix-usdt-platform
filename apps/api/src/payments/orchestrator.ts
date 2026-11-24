@@ -1,3 +1,4 @@
+import { transferAttemptIdempotencyKey } from './transfer-attempt.js';
 import { PrismaClient, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
@@ -120,8 +121,9 @@ export class PaymentOrchestrator {
   }
 
   async settleMerchantPayout(paymentId: string): Promise<void> {
-    const existing = await this.prisma.transfer.findFirst({
+    let existing = await this.prisma.transfer.findFirst({
       where: { paymentId, kind: TransferKind.MERCHANT_PAYOUT },
+      orderBy: { createdAt: 'desc' },
     });
 
     // If already completed locally, just sync global state
@@ -149,11 +151,13 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
+          // The provider has confirmed a terminal failure. Preserve this attempt
+          // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
             await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.FAILED } });
           });
-          return;
+          existing = { ...existing, status: TransferStatus.FAILED };
         }
         if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
@@ -184,7 +188,9 @@ export class PaymentOrchestrator {
     }
 
     // Reuse existing idempotency key on retry to guarantee provider-side dedup
-    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:merchant:v1`;
+    const idempotencyKey = existing?.status === TransferStatus.FAILED
+      ? transferAttemptIdempotencyKey(paymentId, TransferKind.MERCHANT_PAYOUT, Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1)
+      : existing?.idempotencyKey ?? transferAttemptIdempotencyKey(paymentId, TransferKind.MERCHANT_PAYOUT, 1);
     try {
       // Decrypt PII before sending to provider (audit item #7)
       const decryptedAddress = decryptPii(wallet.addressEncrypted);
@@ -252,8 +258,9 @@ export class PaymentOrchestrator {
   }
 
   async settlePlatformCommission(paymentId: string): Promise<void> {
-    const existing = await this.prisma.transfer.findFirst({
+    let existing = await this.prisma.transfer.findFirst({
       where: { paymentId, kind: TransferKind.PLATFORM_COMMISSION },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (existing?.status === TransferStatus.COMPLETED) {
@@ -280,11 +287,13 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
+          // The provider has confirmed a terminal failure. Preserve this attempt
+          // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
             await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.FAILED } });
           });
-          return;
+          existing = { ...existing, status: TransferStatus.FAILED };
         }
         if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
@@ -323,7 +332,9 @@ export class PaymentOrchestrator {
     const commissionAmount = payment.commissionUsdt;
     if (!commissionAmount) return;
 
-    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:platform:v1`;
+    const idempotencyKey = existing?.status === TransferStatus.FAILED
+      ? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1)
+      : existing?.idempotencyKey ?? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, 1);
     try {
       const leg = await this.provider.settlePlatformCommission({
         platformWallet,
