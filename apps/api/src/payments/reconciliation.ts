@@ -35,7 +35,7 @@ export class ReconciliationService {
     // 2. Conversion done but settlement not started (>5min)
     const conversionStuck = await this.prisma.payment.findMany({
       where: {
-        status: PaymentStatus.CRYPTO_CREDITED,
+        status: { in: [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED] },
         updatedAt: { lt: staleThreshold },
       },
       select: { id: true, amountBrlCents: true },

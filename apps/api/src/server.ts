@@ -15,6 +15,7 @@ import { handleFoxbitWebhookEvent } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
+import { ReconciliationService } from './payments/reconciliation.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 
@@ -463,11 +464,16 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
   const { id } = request.params as { id: string };
   const payment = await prisma.payment.findUnique({ where: { id } });
   if (!payment) return reply.code(404).send({ error: 'not_found' });
-  if (payment.status !== PaymentStatus.FAILED) {
-    return reply.code(400).send({ error: 'invalid_state', message: 'Only FAILED payments can be retried' });
+  const resumable = [PaymentStatus.FAILED, PaymentStatus.UNDER_REVIEW].includes(payment.status)
+    && payment.providerGrossUsdt !== null
+    && payment.merchantNetUsdt !== null
+    && payment.commissionUsdt !== null;
+  if (!resumable) {
+    return reply.code(400).send({ error: 'invalid_state', message: 'Only converted payments with a recoverable payout state can be reconciled' });
   }
   await enqueueSettlement(payment.id, payment.amountBrlCents);
-  return { success: true, message: 'Settlement re-enqueued' };
+  await audit(request, 'PAYMENT_RECONCILIATION_ENQUEUED', 'PAYMENT', payment.id, { previousStatus: payment.status });
+  return { success: true, message: 'Provider reconciliation enqueued; unknown transfers will not be blindly resubmitted' };
 });
 
 // --- Protected Merchant Endpoint: Create Payment (HMAC Auth) ---
@@ -574,8 +580,16 @@ app.setErrorHandler((error, request, reply) => {
 // Start async workers for payment settlement and transfer retries
 const settlementWorker = startSettlementWorker();
 const retryWorker = startRetryWorker();
+const reconciliation = new ReconciliationService(prisma);
+const reconciliationTimer = setInterval(() => {
+  void reconciliation.reconcile().catch((error) => {
+    app.log.error({ err: error instanceof Error ? error.name : 'unknown' }, 'Payment reconciliation cycle failed');
+  });
+}, 5 * 60 * 1000);
+reconciliationTimer.unref();
 
 const shutdown = async () => {
+  clearInterval(reconciliationTimer);
   await settlementWorker.close();
   await retryWorker.close();
   await closeQueues();
