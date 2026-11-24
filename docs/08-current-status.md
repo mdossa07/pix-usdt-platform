@@ -1,4 +1,4 @@
-# Status do projeto — 24/11/2026
+# Status do projeto — 24/11/2026 (atualizado após PR #10)
 
 ## Entregue e validado
 
@@ -47,3 +47,45 @@
 - Nunca configurar credenciais reais em repositório público ou em arquivos versionados.
 - Nunca trocar para `sandbox/live` para contornar bloqueios do adaptador.
 - Um pagamento só pode ser considerado finalizado após confirmação independente dos dois payouts, reconciliação do ledger e conferência do saldo do provedor.
+
+
+## Novas entregas integradas no master
+
+- PR #8: serviço de idempotência transacional com hash canônico do corpo, resposta serializada e evento de auditoria na mesma transação PostgreSQL.
+- PR #9: contrato de idempotência conectado ao endpoint `POST /v1/payments` e ao dashboard do comerciante. A mesma chave e o mesmo payload recuperam a resposta original; corpo diferente retorna HTTP 409. Chave pendente e fingerprint SHA-256 ficam no navegador até resposta confirmada ou logout.
+- A cobrança idempotente nasce em `PIX_PENDING` e usa a taxa `PLATFORM_COMMISSION_BPS` configurada.
+- PR #10: TOTP RFC 6238 para superadministradores, segredo cifrado AES-256-GCM, desafio de login de cinco minutos, consumo atômico de passos e limitação de tentativas.
+- PR #10: dez códigos de recuperação independentes de 128 bits, armazenamento apenas de hashes SHA-256, consumo único transacional e regeneração protegida por senha atual + TOTP.
+- Middleware de sessão revalida usuário ativo e papel atual no PostgreSQL em cada rota autenticada, revogando imediatamente sessões de contas desativadas ou com papel alterado.
+
+## Verificações recentes
+
+- PR #8: serviço e testes PostgreSQL de idempotência aprovados.
+- PR #9: CI completo aprovado, incluindo concorrência de cobranças, migrations, financeiro, HMAC, webhooks e build: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45481197090
+- PR #10: CI completo aprovado, incluindo RFC 6238, teste concorrente de recuperação PostgreSQL, migrations, testes financeiros, idempotência, HMAC, webhooks e build: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45484553161
+- PR #8, #9 e #10 estão integrados ao branch principal.
+
+## Bloqueios atuais para produção
+
+- Nenhuma cobrança PIX real é emitida; o checkout permanece explicitamente mock.
+- Nenhuma conversão BRL→USDT real é executada.
+- Nenhum dos dois payouts on-chain (comerciante 98% e plataforma 2%) foi homologado.
+- TransFi v3 ainda exige integração atualizada de senders/recipients, consulta dinâmica de campos obrigatórios, método PIX disponível para BR, onboarding KYC/KYB e dois payouts independentes.
+- Foxbit Partner exige permissões comerciais específicas. O Fiat Gateway coleta PIX no nível do parceiro; funding de sub-member é um fluxo separado (cash-in interno ou chave PIX provisionada pela Foxbit), que precisa ser aprovado para a arquitetura escolhida.
+- Ainda não recebemos credenciais sandbox, MID/IDs de parceiro, permissões ou contratos operacionais para certificar um provedor de ponta a ponta.
+- O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido por cada corredor e provedor.
+- Webhooks de saída para sistemas dos comerciantes ainda não foram implementados.
+- JWT do painel ainda fica em localStorage; antes da produção, migrar para cookie HttpOnly/Secure/SameSite ou BFF com proteção CSRF.
+- O TOTP está implementado, mas todos os superadministradores precisam habilitá-lo antes da produção e a operação precisa documentar um processo multi-pessoa de break-glass caso todos os fatores de recuperação sejam perdidos.
+- Faltam teste visual/funcional de navegador, observabilidade/alertas operacionais, runbooks, pentest externo e revisão jurídica/regulatória/fiscal.
+
+## Próximas etapas
+
+1. Escolher e obter aprovação formal do provedor principal para o fluxo marketplace (payin PIX, saldo em USDT e dois payouts).
+2. Confirmar a arquitetura de ownership do dinheiro, KYC/KYB, Travel Rule, tarifas, limites e quem é o beneficiário legal de cada perna.
+3. Implementar o cliente TransFi v3 atual ou o fluxo Foxbit Partner homologado, sem inventar campos ou endpoints.
+4. Construir checkout do pagador com captura segura de dados e onboarding dinâmico para os campos exigidos pelo provedor.
+5. Homologar payin, conversão, payouts independentes, webhooks e conciliação com credenciais reais de sandbox.
+6. Implementar webhooks de saída seguros para comerciantes e completar o fluxo KYC/KYB.
+7. Migrar autenticação do painel para cookie HttpOnly/BFF, executar testes E2E de navegador, pentest e revisão jurídica/regulatória/fiscal.
+8. Liberar produção somente depois de confirmar os dois payouts, ledger balanceado e reconciliação do saldo do provedor.
