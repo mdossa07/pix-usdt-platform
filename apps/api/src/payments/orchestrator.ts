@@ -46,8 +46,10 @@ export class PaymentOrchestrator {
         const brlWhole = payment.amountBrlCents / 100n;
         const brlFraction = (payment.amountBrlCents % 100n).toString().padStart(2, '0');
 
-        await tx.payment.update({
-          where: { id: paymentId },
+        // Optimistic state transition: only one concurrent webhook/worker may
+        // claim PIX_CONFIRMED and create the accounting entries for this payment.
+        const claimed = await tx.payment.updateMany({
+          where: { id: paymentId, status: PaymentStatus.PIX_CONFIRMED },
           data: {
             status: PaymentStatus.CONVERSION_PENDING,
             providerGrossUsdt: split.totalUsdt,
@@ -58,19 +60,24 @@ export class PaymentOrchestrator {
           },
         });
 
-        // Unique ledger references plus skipDuplicates make repeated webhook deliveries harmless.
-        await tx.ledgerEntry.createMany({
-          data: [
-            { paymentId, accountCode: 'PIX_RECEIVABLE', asset: 'BRL', direction: LedgerDirection.DEBIT, amount: `${brlWhole}.${brlFraction}`, status: LedgerStatus.POSTED, reference: `${paymentId}:brl:recv` },
-            { paymentId, accountCode: 'USDT_GROSS', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.totalUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:gross` },
-            { paymentId, accountCode: 'PLATFORM_COMMISSION', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.commissionUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:comm` },
-            { paymentId, accountCode: 'MERCHANT_PAYABLE', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.merchantUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:merch` },
-          ],
-          skipDuplicates: true,
-        });
-        return true;
+        if (claimed.count === 1) {
+          await tx.ledgerEntry.createMany({
+            data: [
+              { paymentId, accountCode: 'PIX_RECEIVABLE', asset: 'BRL', direction: LedgerDirection.DEBIT, amount: `${brlWhole}.${brlFraction}`, status: LedgerStatus.POSTED, reference: `${paymentId}:brl:recv` },
+              { paymentId, accountCode: 'USDT_GROSS', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.totalUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:gross` },
+              { paymentId, accountCode: 'PLATFORM_COMMISSION', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.commissionUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:comm` },
+              { paymentId, accountCode: 'MERCHANT_PAYABLE', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.merchantUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:merch` },
+            ],
+            skipDuplicates: true,
+          });
+          return true;
+        }
       }
 
+      // A competing worker may have won the state transition. Read its committed
+      // values and continue only when the full financial calculation is present.
+      const latest = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!latest) throw new Error('payment_not_found');
       const resumableStatuses: PaymentStatus[] = [
         PaymentStatus.CONVERSION_PENDING,
         PaymentStatus.CRYPTO_CREDITED,
@@ -80,11 +87,11 @@ export class PaymentOrchestrator {
         PaymentStatus.UNDER_REVIEW,
         PaymentStatus.FAILED,
       ];
-      return resumableStatuses.includes(payment.status)
-        && payment.providerGrossUsdt !== null
-        && payment.merchantNetUsdt !== null
-        && payment.commissionUsdt !== null;
-    }, { isolationLevel: 'Serializable' });
+      return resumableStatuses.includes(latest.status)
+        && latest.providerGrossUsdt !== null
+        && latest.merchantNetUsdt !== null
+        && latest.commissionUsdt !== null;
+    });
 
     if (!shouldContinue) return;
 
