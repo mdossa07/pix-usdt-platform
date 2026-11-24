@@ -5,10 +5,21 @@ import { randomUUID } from 'node:crypto';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting PixSplit seed...');
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  if (nodeEnv === 'production' || nodeEnv === 'test') {
+    throw new Error(`❌ Seed refused to run in NODE_ENV=${nodeEnv}. Use migrations and controlled fixtures instead.`);
+  }
+
+  const adminPasswordRaw = process.env.SEED_ADMIN_PASSWORD;
+  const merchantPasswordRaw = process.env.SEED_MERCHANT_PASSWORD;
+  if (!adminPasswordRaw || adminPasswordRaw.length < 12 || !merchantPasswordRaw || merchantPasswordRaw.length < 12) {
+    throw new Error('❌ Seed requires SEED_ADMIN_PASSWORD and SEED_MERCHANT_PASSWORD (min 12 chars) in .env for dev environments.');
+  }
+
+  console.log('🌱 Starting PixSplit seed (development only)...');
 
   // 1. Create Super Admin User
-  const adminPassword = await argon2.hash('admin123');
+  const adminPassword = await argon2.hash(adminPasswordRaw);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@pixsplit.dev' },
     update: {},
@@ -22,7 +33,7 @@ async function main() {
   console.log(`✅ Admin user created: ${admin.email}`);
 
   // 2. Create Demo Merchant
-  const merchantPassword = await argon2.hash('merchant123');
+  const merchantPassword = await argon2.hash(merchantPasswordRaw);
   const merchantUser = await prisma.user.upsert({
     where: { email: 'demo@merchant.com' },
     update: {},

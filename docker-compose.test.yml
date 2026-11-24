@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: pixsplit-test-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pixsplit_test
+      POSTGRES_PASSWORD: pixsplit_test_pass
+      POSTGRES_DB: pixsplit_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pixsplit_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /var/lib/postgresql/data
