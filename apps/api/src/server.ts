@@ -297,9 +297,10 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     throw error;
   }
   let processed = false;
+  const foxbitOpenPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
   if (event.data.type !== 'withdrawal' && event.data.purchase_id && state === 'PIX_CONFIRMED') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
-    if (payment && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+    if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
         where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
         data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
@@ -308,7 +309,7 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     }
   } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
-    if (payment && [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING].includes(payment.status)) {
+    if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
         where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
         data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
