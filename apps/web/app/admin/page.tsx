@@ -55,6 +55,7 @@ interface AdminTwoFactorStatus {
   enabled: boolean;
   enabledAt: string | null;
   setupPending: boolean;
+  recoveryCodesRemaining: number;
 }
 
 interface AdminTwoFactorSetup {
@@ -96,6 +97,7 @@ export default function AdminDashboard() {
   const [twoFactorStatus, setTwoFactorStatus] = useState<AdminTwoFactorStatus | null>(null);
   const [twoFactorSetup, setTwoFactorSetup] = useState<AdminTwoFactorSetup | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorRecoveryCodes, setTwoFactorRecoveryCodes] = useState<string[] | null>(null);
   const [twoFactorPassword, setTwoFactorPassword] = useState('');
   const [twoFactorBusy, setTwoFactorBusy] = useState(false);
   const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
@@ -261,10 +263,11 @@ export default function AdminDashboard() {
     setTwoFactorBusy(true);
     setTwoFactorNotice(null);
     try {
-      await apiRequest('/v1/admin/2fa/enable', {
+      const enabled = await apiRequest<{ recoveryCodes: string[] }>('/v1/admin/2fa/enable', {
         method: 'POST',
         body: JSON.stringify({ code: twoFactorCode }),
       }, token);
+      setTwoFactorRecoveryCodes(enabled.recoveryCodes);
       const status = await apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token);
       setTwoFactorStatus(status);
       setTwoFactorSetup(null);
@@ -327,7 +330,22 @@ export default function AdminDashboard() {
                 </span>
               </div>
               {twoFactorStatus.enabled ? (
-                <p className="text-sm text-slate-600">Segundo fator ativo desde {twoFactorStatus.enabledAt ? new Date(twoFactorStatus.enabledAt).toLocaleString('pt-BR') : 'a confirmação'}. O próximo login administrativo exigirá senha e código temporário.</p>
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-600">Segundo fator ativo desde {twoFactorStatus.enabledAt ? new Date(twoFactorStatus.enabledAt).toLocaleString('pt-BR') : 'a confirmação'}. O próximo login administrativo exigirá senha e código temporário.</p>
+                  <p className="text-xs font-medium text-slate-500">Códigos de recuperação restantes: {twoFactorStatus.recoveryCodesRemaining}</p>
+                  {twoFactorRecoveryCodes && (
+                    <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+                      <div>
+                        <p className="font-semibold text-amber-900">Guarde estes códigos agora</p>
+                        <p className="mt-1 text-sm text-amber-800">Cada código só pode ser usado uma vez. Eles não serão exibidos novamente; guarde-os fora deste dispositivo.</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {twoFactorRecoveryCodes.map(code => <code key={code} className="rounded bg-white px-3 py-2 font-mono text-sm text-slate-900">{code}</code>)}
+                      </div>
+                      <button type="button" onClick={() => setTwoFactorRecoveryCodes(null)} className="rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">Já guardei os códigos</button>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-3">
                   <p className="text-sm text-slate-600">A configuração é feita com um segredo exclusivo, cifrado no banco. O código de confirmação é necessário para ativar o segundo fator.</p>
