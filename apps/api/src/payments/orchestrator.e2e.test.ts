@@ -18,6 +18,7 @@ class MockProvider implements PaymentProvider {
   public timeoutPlatform = false;
   public merchantCompletedRemotely = false;
   public platformCompletedRemotely = false;
+  public beforeTransferStatusResponse?: () => Promise<void>;
 
   async createPixCharge() {
     return {
@@ -68,6 +69,7 @@ class MockProvider implements PaymentProvider {
 
   async getTransferStatus(providerWithdrawalSn: string | null, idempotencyKey: string): Promise<TransferStatusResult | null> {
     this.callLog.push({ method: 'getTransferStatus', args: [providerWithdrawalSn, idempotencyKey] });
+    await this.beforeTransferStatusResponse?.();
     if ((providerWithdrawalSn?.includes('merchant') || idempotencyKey.includes(':merchant:')) && this.merchantCompletedRemotely) {
       return { status: 'COMPLETED', txHash: '0xrecovered_merchant_hash', providerReference: providerWithdrawalSn ?? 'merchant-recovered-by-partner-id' };
     }
@@ -372,28 +374,72 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(1);
     expect(provider.callLog.filter((entry) => entry.method === 'settlePlatformCommission')).toHaveLength(1);
 
-    // A late "pending" lookup must never regress a transfer already completed
-    // by a concurrent webhook/worker.
-    const merchantTransfer = updated.transfers.find((transfer) => transfer.kind === TransferKind.MERCHANT_PAYOUT)!;
-    await prisma.transfer.update({
-      where: { id: merchantTransfer.id },
-      data: { status: TransferStatus.COMPLETED },
+  });
+
+
+
+  it('Scenario K: a late PENDING provider response cannot overwrite a concurrent COMPLETED webhook', async () => {
+    const payment = await prisma.payment.create({
+      data: {
+        externalId: 'ext-k-late-pending-does-not-regress',
+        merchantId: 'merch-1',
+        walletDestinationId: 'wallet-dest-1',
+        status: PaymentStatus.UNDER_REVIEW,
+        amountBrlCents: BigInt(50000),
+        providerGrossUsdt: '9090',
+        merchantNetUsdt: '8908',
+        commissionUsdt: '182',
+        fxRate: '5.5',
+        paidAt: new Date(),
+        merchantTransferStatus: TransferStatus.SUBMITTED,
+        platformTransferStatus: TransferStatus.COMPLETED,
+      },
     });
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { merchantTransferStatus: TransferStatus.COMPLETED },
+
+    const idempotencyKey = `${payment.id}:merchant:v1`;
+    const transfer = await prisma.transfer.create({
+      data: {
+        id: 'transfer-k-merchant',
+        paymentId: payment.id,
+        kind: TransferKind.MERCHANT_PAYOUT,
+        amountUsdt: '8908',
+        networkCode: 'TRON',
+        destinationAddressEnc: 'enc:T9yD14Nj9j7xAB4dbGeiX9h8bNzyBvL3Qz',
+        providerWithdrawalSn: 'merchant-order-k',
+        idempotencyKey,
+        status: TransferStatus.SUBMITTED,
+      },
     });
-    await orchestrator.settleMerchant(payment.id);
-    const afterLatePending = await prisma.payment.findUniqueOrThrow({
+
+    // While the provider lookup is in flight, a valid webhook records completion.
+    provider.beforeTransferStatusResponse = async () => {
+      await prisma.$transaction(async (tx) => {
+        await tx.transfer.update({
+          where: { id: transfer.id },
+          data: { status: TransferStatus.COMPLETED, txHash: '0xconfirmed_by_webhook' },
+        });
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { merchantTransferStatus: TransferStatus.COMPLETED },
+        });
+      });
+    };
+
+    // The provider query now returns stale PENDING after the webhook has won.
+    await orchestrator.settleMerchantPayout(payment.id);
+
+    const updated = await prisma.payment.findUniqueOrThrow({
       where: { id: payment.id },
       include: { transfers: true },
     });
-    expect(afterLatePending.status).toBe(PaymentStatus.COMPLETED);
-    expect(afterLatePending.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
-    expect(afterLatePending.transfers.find((transfer) => transfer.kind === TransferKind.MERCHANT_PAYOUT)?.status)
-      .toBe(TransferStatus.COMPLETED);
-  });
+    const merchantTransfer = updated.transfers.find((item) => item.kind === TransferKind.MERCHANT_PAYOUT)!;
 
+    expect(merchantTransfer.status).toBe(TransferStatus.COMPLETED);
+    expect(merchantTransfer.txHash).toBe('0xconfirmed_by_webhook');
+    expect(updated.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
+    expect(updated.status).toBe(PaymentStatus.COMPLETED);
+    expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(0);
+  });
 
   it('Scenario I: Recover a payout accepted remotely when the provider order ID was never persisted', async () => {
     const payment = await prisma.payment.create({
