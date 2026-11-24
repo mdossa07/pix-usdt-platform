@@ -1,5 +1,5 @@
 import { canBeDefaultDestination } from './wallets/wallet-eligibility.js';
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
@@ -7,12 +7,13 @@ import rawBody from 'fastify-raw-body';
 import rateLimit from '@fastify/rate-limit';
 import { PrismaClient, Prisma, WalletStatus, WalletType, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus, MerchantType } from '@prisma/client';
 import argon2 from 'argon2';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from './security/totp.js';
 import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecoveryCode } from './security/two-factor-recovery.js';
+import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -27,14 +28,39 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
+const APP_ORIGIN = new URL(config.APP_URL).origin;
 
 await app.register(helmet);
-await app.register(cors, { origin: config.APP_URL, credentials: true });
+await app.register(cors, { origin: APP_ORIGIN, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-csrf-token'] });
 await app.register(rateLimit, { max: 80, timeWindow: '1 minute' });
 await app.register(jwt, { secret: config.JWT_SECRET, sign: { expiresIn: '2h' } });
 await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
 
+const sessionCookieOptions = {
+  secure: config.NODE_ENV === 'production',
+  sameSite: config.NODE_ENV === 'production' ? 'None' as const : 'Lax' as const,
+  maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
+};
+
+function issueBrowserSession(reply: FastifyReply, user: { id: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT' }): string {
+  const csrfToken = randomBytes(32).toString('hex');
+  const token = app.jwt.sign({ sub: user.id, role: user.role, csrfToken });
+  reply.header('Set-Cookie', buildSessionCookieHeader(token, sessionCookieOptions));
+  return csrfToken;
+}
+
+function clearBrowserSession(reply: FastifyReply): void {
+  reply.header('Set-Cookie', clearSessionCookieHeader(sessionCookieOptions));
+}
+
 app.decorate('authenticate', async (request, reply) => {
+  const authorization = request.headers.authorization;
+  const sessionToken = readCookie(request.headers.cookie, SESSION_COOKIE_NAME);
+  const cookieSession = !authorization && Boolean(sessionToken);
+  if (cookieSession && sessionToken) {
+    request.headers.authorization = `Bearer ${sessionToken}`;
+  }
+
   try {
     await request.jwtVerify();
   } catch {
@@ -45,6 +71,20 @@ app.decorate('authenticate', async (request, reply) => {
   if ((request.user as { purpose?: string }).purpose === 'admin-2fa-challenge') {
     await reply.code(401).send({ error: 'two_factor_required' });
     return;
+  }
+
+  if (cookieSession && !['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) {
+    const suppliedCsrf = request.headers['x-csrf-token'];
+    const validCsrf = isValidCsrfRequest({
+      origin: request.headers.origin,
+      expectedOrigin: APP_ORIGIN,
+      expectedToken: (request.user as { csrfToken?: string }).csrfToken,
+      suppliedToken: typeof suppliedCsrf === 'string' ? suppliedCsrf : undefined,
+    });
+    if (!validCsrf) {
+      await reply.code(403).send({ error: 'csrf_validation_failed' });
+      return;
+    }
   }
 
   const currentUser = await prisma.user.findUnique({
@@ -125,8 +165,8 @@ app.post('/v1/auth/register', async (request, reply) => {
       } },
     }, include: { merchant: true } });
     await prisma.auditEvent.create({ data: { actorUserId: result.id, action: 'ACCOUNT_REGISTERED', entityType: 'USER', entityId: result.id } });
-    const token = app.jwt.sign({ sub: result.id, role: result.role });
-    return reply.code(201).send({ token, user: { id: result.id, email: result.email, fullName: result.fullName, role: result.role }, merchant: { id: result.merchant!.id, kycStatus: result.merchant!.kycStatus } });
+    const csrfToken = issueBrowserSession(reply, { id: result.id, role: result.role });
+    return reply.code(201).send({ csrfToken, user: { id: result.id, email: result.email, fullName: result.fullName, role: result.role }, merchant: { id: result.merchant!.id, kycStatus: result.merchant!.kycStatus } });
   } catch (error) {
     if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(409).send({ error: 'email_already_registered' });
     throw error;
@@ -148,8 +188,8 @@ app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '5 minu
   }
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-  const token = app.jwt.sign({ sub: user.id, role: user.role });
-  return { token, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role }, merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null };
+  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role });
+  return { csrfToken, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role }, merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null };
 });
 
 app.post('/v1/auth/2fa/verify', {
@@ -208,7 +248,7 @@ app.post('/v1/auth/2fa/verify', {
     return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
   }
 
-  const token = app.jwt.sign({ sub: user.id, role: user.role });
+  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role });
   await prisma.auditEvent.create({
     data: {
       actorUserId: user.id,
@@ -220,10 +260,21 @@ app.post('/v1/auth/2fa/verify', {
     },
   });
   return {
-    token,
+    csrfToken,
     user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role },
     merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null,
   };
+});
+
+app.get('/v1/auth/csrf', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const csrfToken = (request.user as { csrfToken?: string }).csrfToken;
+  if (!csrfToken) return reply.code(403).send({ error: 'csrf_session_not_available' });
+  return { csrfToken };
+});
+
+app.post('/v1/auth/logout', { preHandler: [app.authenticate] }, async (_request, reply) => {
+  clearBrowserSession(reply);
+  return { success: true };
 });
 
 app.get('/v1/me', { preHandler: app.authenticate }, async (request, reply) => {

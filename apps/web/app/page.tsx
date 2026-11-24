@@ -8,7 +8,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let active = true;
-    const token = localStorage.getItem('pixsplit_token');
+    const token = localStorage.getItem('pixsplit_authenticated');
     if (!token) {
       window.location.replace('/login');
       return () => { active = false; };
@@ -23,7 +23,9 @@ export default function HomePage() {
       })
       .catch(() => {
         if (!active) return;
+        localStorage.removeItem('pixsplit_authenticated');
         localStorage.removeItem('pixsplit_token');
+        sessionStorage.removeItem('pixsplit_csrf');
         setMessage('Sua sessão expirou. Redirecionando para o acesso…');
         window.location.replace('/login');
       });

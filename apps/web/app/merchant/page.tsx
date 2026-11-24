@@ -203,7 +203,9 @@ export default function MerchantDashboard() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Não foi possível carregar os dados.';
       if (message === 'unauthorized') {
+        localStorage.removeItem('pixsplit_authenticated');
         localStorage.removeItem('pixsplit_token');
+        sessionStorage.removeItem('pixsplit_csrf');
         window.location.assign('/login');
         return;
       }
@@ -214,7 +216,7 @@ export default function MerchantDashboard() {
   }, []);
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('pixsplit_token');
+    const storedToken = localStorage.getItem('pixsplit_authenticated');
     if (!storedToken) {
       window.location.replace('/login');
       return;

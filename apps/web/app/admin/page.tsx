@@ -105,7 +105,7 @@ export default function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('pixsplit_token') : null;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('pixsplit_authenticated') : null;
 
   useEffect(() => {
     if (!token) {
@@ -131,7 +131,9 @@ export default function AdminDashboard() {
       })
       .catch((err) => {
         if (err instanceof Error && err.message === 'unauthorized') {
+          localStorage.removeItem('pixsplit_authenticated');
           localStorage.removeItem('pixsplit_token');
+          sessionStorage.removeItem('pixsplit_csrf');
           window.location.assign('/login');
           return;
         }

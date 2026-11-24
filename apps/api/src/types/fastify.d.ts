@@ -2,7 +2,7 @@ import '@fastify/jwt';
 import 'fastify';
 
 declare module '@fastify/jwt' {
-  interface FastifyJWT { payload: { sub: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT'; purpose?: string }; user: { sub: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT'; purpose?: string }; }
+  interface FastifyJWT { payload: { sub: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT'; purpose?: string; csrfToken?: string }; user: { sub: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT'; purpose?: string; csrfToken?: string }; }
 }
 
 declare module 'fastify' {

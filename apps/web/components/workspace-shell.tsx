@@ -2,12 +2,21 @@
 
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { apiRequest } from '../lib/api';
 
 export default function WorkspaceShell({ children, area }: { children: ReactNode; area: string }) {
-  const logout = () => {
-    localStorage.removeItem('pixsplit_token');
-    localStorage.removeItem('pixsplit_pending_payment_create');
-    window.location.assign('/login');
+  const logout = async () => {
+    try {
+      await apiRequest('/v1/auth/logout', { method: 'POST' });
+    } catch {
+      // Clear local browser state even if the cookie has expired.
+    } finally {
+      localStorage.removeItem('pixsplit_authenticated');
+      localStorage.removeItem('pixsplit_token');
+      localStorage.removeItem('pixsplit_pending_payment_create');
+      sessionStorage.removeItem('pixsplit_csrf');
+      window.location.assign('/login');
+    }
   };
 
   return (
