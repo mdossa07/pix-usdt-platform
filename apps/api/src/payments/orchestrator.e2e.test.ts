@@ -194,7 +194,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     expect(platformTx.status).toBe(TransferStatus.COMPLETED);
   });
 
-  it('Scenario B: Merchant succeeds, platform fails — independent states preserved', async () => {
+  it('Scenario B: Merchant succeeds, platform outcome is ambiguous — no unsafe retry', async () => {
     provider.failPlatform = true;
 
     const payment = await prisma.payment.create({
@@ -213,11 +213,11 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
 
     const updated = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(updated.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
-    expect(updated.platformTransferStatus).toBe(TransferStatus.FAILED);
+    expect(updated.platformTransferStatus).toBe(TransferStatus.SUBMITTED);
     expect(updated.status).toBe(PaymentStatus.UNDER_REVIEW);
   });
 
-  it('Scenario C: Platform succeeds, merchant fails — independent states preserved', async () => {
+  it('Scenario C: Platform succeeds, merchant outcome is ambiguous — no unsafe retry', async () => {
     provider.failMerchant = true;
 
     const payment = await prisma.payment.create({
@@ -237,7 +237,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
       where: { id: payment.id },
       include: { transfers: true },
     });
-    expect(updated.merchantTransferStatus).toBe(TransferStatus.FAILED);
+    expect(updated.merchantTransferStatus).toBe(TransferStatus.SUBMITTED);
     // Platform leg is independent: it should still complete even when merchant fails
     expect(updated.platformTransferStatus).toBe(TransferStatus.COMPLETED);
     // Global status is FAILED because not all legs completed
@@ -249,7 +249,7 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     expect(platformTx.status).toBe(TransferStatus.COMPLETED);
   });
 
-  it('Scenario D: Both legs fail — no money lost, both marked FAILED', async () => {
+  it('Scenario D: Both provider outcomes are ambiguous — both attempts remain claimed', async () => {
     provider.failMerchant = true;
     provider.failPlatform = true;
 
@@ -267,8 +267,8 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     await orchestrator.handlePixConfirmed(payment.id, BigInt(50000));
 
     const updated = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
-    expect(updated.merchantTransferStatus).toBe(TransferStatus.FAILED);
-    expect(updated.platformTransferStatus).toBe(TransferStatus.FAILED);
+    expect(updated.merchantTransferStatus).toBe(TransferStatus.SUBMITTED);
+    expect(updated.platformTransferStatus).toBe(TransferStatus.SUBMITTED);
     expect(updated.status).toBe(PaymentStatus.UNDER_REVIEW);
   });
 
@@ -343,6 +343,34 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     const platformCalls = provider.callLog.filter((c) => c.method === 'settlePlatformCommission');
     expect(merchantCalls).toHaveLength(1);
     expect(platformCalls).toHaveLength(1);
+  });
+
+
+  it('Scenario H: Concurrent duplicate webhooks claim each payout only once', async () => {
+    const payment = await prisma.payment.create({
+      data: {
+        externalId: 'ext-h-concurrent-idempotent',
+        merchantId: 'merch-1',
+        walletDestinationId: 'wallet-dest-1',
+        status: PaymentStatus.PIX_CONFIRMED,
+        amountBrlCents: BigInt(100000),
+        paidAt: new Date(),
+      },
+    });
+
+    await Promise.all([
+      orchestrator.handlePixConfirmed(payment.id, BigInt(100000)),
+      orchestrator.handlePixConfirmed(payment.id, BigInt(100000)),
+    ]);
+
+    const updated = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      include: { transfers: true },
+    });
+    expect(updated.status).toBe(PaymentStatus.COMPLETED);
+    expect(updated.transfers).toHaveLength(2);
+    expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(1);
+    expect(provider.callLog.filter((entry) => entry.method === 'settlePlatformCommission')).toHaveLength(1);
   });
 
   it('Scenario G: Small value rounding — floor preserves conservation', async () => {
