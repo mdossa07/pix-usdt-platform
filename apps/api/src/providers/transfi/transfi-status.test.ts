@@ -8,7 +8,7 @@ import {
 test('TransFi payin fulfillment accepts only final success statuses', () => {
   assert.equal(mapTransFiChargeStatus('fund_settled'), 'PAID');
   assert.equal(mapTransFiChargeStatus('asset_settled'), 'PAID');
-  for (const status of ['initiated', 'fund_processing', 'fund_deposited', 'asset_processing', 'manual_review', 'approval_pending']) {
+  for (const status of ['initiated', 'fund_processing', 'fund_deposited', 'asset_deposited', 'asset_processing', 'manual_review', 'approval_pending']) {
     assert.equal(mapTransFiChargeStatus(status), 'PENDING', status);
   }
 });
