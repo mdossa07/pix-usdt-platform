@@ -192,113 +192,46 @@ export default function CheckoutPage() {
 
         <footer className="checkout-footer">
           <p className="disclaimer">
-            ⚠️ Modo demonstração: este código PIX é fictício e não aceita pagamento real.
-            Integração com Foxbit aguarda homologação.
+            {data.mode === 'mock'
+              ? 'Ambiente de demonstração: este código PIX não aceita pagamentos reais.'
+              : 'Confira o valor e o beneficiário no aplicativo do seu banco antes de confirmar.'}
           </p>
-          <p className="network-info">
-            Rede: {data.wallet.networkCode.toUpperCase()} · Carteira: ...{data.wallet.addressLast8}
-          </p>
+          <p className="network-info">Pagamento protegido · A confirmação é atualizada automaticamente nesta página.</p>
         </footer>
       </div>
 
       <style jsx global>{`
-        .checkout-page {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: #0f172a;
-          padding: 1rem;
-          font-family: system-ui, -apple-system, sans-serif;
-        }
-        .checkout-card {
-          background: #1e293b;
-          border: 1px solid #334155;
-          border-radius: 16px;
-          padding: 2rem;
-          max-width: 480px;
-          width: 100%;
-          color: #e2e8f0;
-        }
-        .checkout-card.error { text-align: center; color: #fca5a5; }
-        .checkout-card.loading { text-align: center; color: #94a3b8; }
-        .spin { animation: spin 1s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .checkout-header {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin-bottom: 1.5rem;
-          padding-bottom: 1rem;
-          border-bottom: 1px solid #334155;
-        }
-        .brand-icon { color: #22d3ee; }
-        .brand-name { font-weight: 600; font-size: 0.9rem; color: #94a3b8; }
-        .label { display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        .label-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 0.25rem; }
-        .countdown { font-size: 0.8rem; font-weight: 600; color: #fbbf24; font-variant-numeric: tabular-nums; }
-        .expired-text { color: #f87171; }
-        .merchant-info { margin-bottom: 1.5rem; }
-        .merchant-info strong { font-size: 1.1rem; color: #f1f5f9; }
-        .amount-display { margin-bottom: 1.5rem; }
-        .amount { font-size: 2rem; font-weight: 700; color: #22d3ee; }
-        .description { margin-bottom: 1.5rem; }
-        .description p { margin: 0; color: #cbd5e1; font-size: 0.9rem; }
-        .pix-section { margin-bottom: 1.5rem; }
-        .pix-box {
-          background: #0f172a;
-          border: 1px solid #334155;
-          border-radius: 8px;
-          padding: 0.75rem;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        .pix-box code {
-          flex: 1;
-          font-size: 0.75rem;
-          word-break: break-all;
-          color: #94a3b8;
-          font-family: monospace;
-        }
-        .copy-btn {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          background: #22d3ee;
-          color: #0f172a;
-          border: none;
-          border-radius: 6px;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.8rem;
-          font-weight: 600;
-          cursor: pointer;
-          white-space: nowrap;
-          transition: background 0.2s;
-        }
-        .copy-btn:hover { background: #06b6d4; }
-        .status-feedback {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 0.5rem;
-          padding: 1rem;
-          border-radius: 8px;
-          margin-bottom: 1.5rem;
-          text-align: center;
-        }
-        .status-feedback.pending { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
-        .status-feedback.completed { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
-        .status-feedback.failed, .status-feedback.expired { background: rgba(248, 113, 113, 0.1); color: #f87171; }
-        .status-feedback.default { background: rgba(148, 163, 184, 0.1); color: #94a3b8; }
-        .status-label { font-size: 0.9rem; font-weight: 700; letter-spacing: 0.03em; }
-        .polling-indicator { font-size: 0.7rem; opacity: 0.7; animation: pulse 2s ease-in-out infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-        .success-details { text-align: center; margin-bottom: 1.5rem; }
-        .success-details p { margin: 0; color: #4ade80; font-size: 0.85rem; }
-        .checkout-footer { border-top: 1px solid #334155; padding-top: 1rem; }
-        .disclaimer { font-size: 0.75rem; color: #fbbf24; margin: 0 0 0.5rem; line-height: 1.4; }
-        .network-info { font-size: 0.7rem; color: #64748b; margin: 0; }
+
+.checkout-page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 16px;background:radial-gradient(900px 420px at 50% -12%,#e8f5ef 0%,transparent 68%),#f5f7fb;color:#1b2f4b;font-family:'DM Sans',Inter,ui-sans-serif,system-ui,sans-serif}
+.checkout-card{width:100%;max-width:460px;padding:30px;background:#fff;border:1px solid #e5ebf2;border-radius:22px;color:#1b2f4b;box-shadow:0 22px 65px rgba(30,54,85,.10)}
+.checkout-card.error,.checkout-card.loading{text-align:center;color:#61738b}.checkout-card.error svg{color:#c24141}.checkout-card.loading svg{color:#0b946b}
+.spin{animation:pixsplit-spin 1s linear infinite}@keyframes pixsplit-spin{to{transform:rotate(360deg)}}
+.checkout-header{display:flex;align-items:center;gap:11px;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid #edf1f5}
+.brand-icon{color:#0b946b;width:31px;height:31px;padding:6px;border-radius:10px;background:#eaf8f1}
+.brand-name{font-size:15px;font-weight:800;letter-spacing:-.35px;color:#1b2f4b}
+.merchant-info{margin-bottom:21px}.label{display:block;margin-bottom:6px;color:#7e8da1;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em}
+.merchant-info strong{color:#263d5b;font-size:15px;font-weight:700}
+.amount-display{padding:18px 20px;margin-bottom:20px;border:1px solid #dcefe5;border-radius:15px;background:linear-gradient(135deg,#f0faf5,#fbfefc)}
+.amount{display:block;color:#087e5e;font:800 34px/1.2 'Manrope',sans-serif;letter-spacing:-1.2px;font-variant-numeric:tabular-nums}
+.description{margin-bottom:19px}.description p{margin:0;color:#526781;font-size:13px}
+.pix-section{margin-bottom:19px}.label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.countdown{color:#9a6b1d;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}.expired-text{color:#b42318}
+.pix-box{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid #e2e9f1;border-radius:13px;background:#f8fafc}
+.pix-box code{flex:1;min-width:0;max-height:76px;overflow:auto;color:#536781;font:11px/1.55 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
+.copy-btn{display:flex;align-items:center;justify-content:center;gap:7px;flex-shrink:0;padding:10px 13px;border:0;border-radius:9px;background:#0c9b70;color:#fff;font-size:12px;font-weight:700;white-space:nowrap;transition:background .15s,transform .15s}
+.copy-btn:hover{background:#087e5e;transform:translateY(-1px)}
+.status-feedback{display:flex;flex-direction:column;align-items:center;gap:7px;padding:17px 14px;margin-bottom:19px;border:1px solid transparent;border-radius:13px;text-align:center}
+.status-feedback.pending{color:#986b1e;background:#fff9ec;border-color:#f2e2bc}
+.status-feedback.completed{color:#087d5b;background:#effaf4;border-color:#cceedd}
+.status-feedback.failed,.status-feedback.expired{color:#b42318;background:#fff4f3;border-color:#f3d2cf}
+.status-feedback.default{color:#63758d;background:#f4f7fa;border-color:#e3eaf1}
+.status-label{font-size:12px;font-weight:800;letter-spacing:.045em}.polling-indicator{color:#8291a5;font-size:10px}
+.success-details{margin-bottom:17px;text-align:center}.success-details p{margin:0;color:#087d5b;font-size:12px;line-height:1.55}
+.checkout-footer{padding-top:15px;border-top:1px solid #edf1f5}
+.disclaimer{margin:0 0 8px;color:#8491a3;font-size:10px;line-height:1.55}
+.network-info{margin:0;color:#8a97a9;font-size:10px;line-height:1.5}
+@media(max-width:520px){.checkout-card{padding:22px 18px;border-radius:18px}.amount{font-size:30px}.copy-btn{padding:9px 10px}}
+
       `}</style>
     </div>
   );
