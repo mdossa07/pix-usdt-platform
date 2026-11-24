@@ -126,17 +126,25 @@ export class PaymentOrchestrator {
       orderBy: { createdAt: 'desc' },
     });
 
-    // If already completed locally, just sync global state
     if (existing?.status === TransferStatus.COMPLETED) {
       await this.syncPaymentGlobalStatus(paymentId);
       return;
     }
 
-    // Recovery: if we have a provider ID but local status is stale/unknown, query provider first
     const currentAttempt = existing;
-    if (currentAttempt?.providerWithdrawalSn && this.provider.getTransferStatus) {
+    if (currentAttempt?.providerWithdrawalSn) {
+      if (!this.provider.getTransferStatus) {
+        await this.prisma.payment.update({
+          where: { id: paymentId },
+          data: { status: PaymentStatus.UNDER_REVIEW, failureCode: 'MERCHANT_PAYOUT_STATUS_UNAVAILABLE' },
+        });
+        return;
+      }
       try {
-        const remoteStatus = await this.provider.getTransferStatus(currentAttempt.providerWithdrawalSn, currentAttempt.idempotencyKey);
+        const remoteStatus = await this.provider.getTransferStatus(
+          currentAttempt.providerWithdrawalSn,
+          currentAttempt.idempotencyKey,
+        );
         if (remoteStatus?.status === 'COMPLETED') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
@@ -152,33 +160,54 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
-          // The provider has confirmed a terminal failure. Preserve this attempt
-          // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
-            await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.FAILED } });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { merchantTransferStatus: TransferStatus.FAILED },
+            });
           });
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
-        }
-        if (remoteStatus?.status === 'PENDING') {
+        } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
-            await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.PROCESSING } });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { merchantTransferStatus: TransferStatus.PROCESSING },
+            });
           });
           return;
+        } else if (remoteStatus === null && currentAttempt.status !== TransferStatus.FAILED) {
+          // A provider 404 means this known reference was not created there.
+          // Reuse the same idempotency reference after resetting the local claim.
+          await this.prisma.transfer.update({
+            where: { id: currentAttempt.id },
+            data: { status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null },
+          });
+          existing = { ...currentAttempt, status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null };
         }
-        // null means the provider explicitly reported that this reference was not found.
       } catch {
-        // A status lookup failure is ambiguous. Never submit another payout while its outcome is unknown.
+        // A failed status lookup is ambiguous. Never submit another payout.
         return;
       }
+    } else if (currentAttempt && currentAttempt.status !== TransferStatus.CREATED) {
+      // A previous worker claimed the payout but did not persist a provider ID.
+      // Its outcome is unknown; stop for manual/provider-side reconciliation.
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'MERCHANT_PAYOUT_REFERENCE_MISSING',
+          failureMessage: 'A payout attempt was claimed but no provider reference was stored. Manual provider reconciliation is required before retrying.',
+        },
+      });
+      return;
     }
 
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
       include: { walletDestination: true },
     });
-
     const wallet = payment.walletDestination;
     if (wallet.status !== 'VERIFIED') {
       await this.prisma.payment.update({
@@ -188,16 +217,50 @@ export class PaymentOrchestrator {
       return;
     }
 
-    // Reuse existing idempotency key on retry to guarantee provider-side dedup
     const idempotencyKey = existing?.status === TransferStatus.FAILED
-      ? transferAttemptIdempotencyKey(paymentId, TransferKind.MERCHANT_PAYOUT, Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1)
-      : existing?.idempotencyKey ?? transferAttemptIdempotencyKey(paymentId, TransferKind.MERCHANT_PAYOUT, 1);
-    try {
-      // Decrypt PII before sending to provider (audit item #7)
-      const decryptedAddress = decryptPii(wallet.addressEncrypted);
-      const decryptedMemo = wallet.tagEncrypted ? decryptPii(wallet.tagEncrypted) : undefined;
-      const decryptedTaxId = wallet.holderTaxIdEncrypted ? decryptPii(wallet.holderTaxIdEncrypted) : undefined;
+      ? transferAttemptIdempotencyKey(
+          paymentId,
+          TransferKind.MERCHANT_PAYOUT,
+          Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1,
+        )
+      : existing?.idempotencyKey
+        ?? transferAttemptIdempotencyKey(paymentId, TransferKind.MERCHANT_PAYOUT, 1);
 
+    const decryptedAddress = decryptPii(wallet.addressEncrypted);
+    const decryptedMemo = wallet.tagEncrypted ? decryptPii(wallet.tagEncrypted) : undefined;
+    const decryptedTaxId = wallet.holderTaxIdEncrypted ? decryptPii(wallet.holderTaxIdEncrypted) : undefined;
+
+    // Persist and atomically claim the transfer BEFORE calling the provider.
+    // Only one worker can move this attempt from CREATED to SUBMITTED.
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const attempt = await tx.transfer.upsert({
+        where: { idempotencyKey },
+        create: {
+          id: randomUUID(),
+          paymentId,
+          kind: TransferKind.MERCHANT_PAYOUT,
+          amountUsdt: payment.merchantNetUsdt!,
+          networkCode: wallet.networkCode,
+          destinationAddressEnc: wallet.addressEncrypted,
+          idempotencyKey,
+          status: TransferStatus.CREATED,
+        },
+        update: {},
+      });
+      const claim = await tx.transfer.updateMany({
+        where: { id: attempt.id, status: TransferStatus.CREATED },
+        data: { status: TransferStatus.SUBMITTED },
+      });
+      if (claim.count !== 1) return false;
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { merchantTransferStatus: TransferStatus.SUBMITTED },
+      });
+      return true;
+    });
+    if (!claimed) return;
+
+    try {
       const leg = await this.provider.settleMerchantUsdt({
         merchantWallet: decryptedAddress,
         network: wallet.networkCode,
@@ -212,30 +275,22 @@ export class PaymentOrchestrator {
         },
       }, idempotencyKey);
 
-      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
+      if (!leg.providerTransferId?.trim()) {
+        throw new Error('provider_transfer_reference_missing');
+      }
+      const newStatus = leg.status === 'COMPLETED'
+        ? TransferStatus.COMPLETED
+        : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
 
       await this.prisma.$transaction(async (tx) => {
-        await tx.transfer.upsert({
+        await tx.transfer.update({
           where: { idempotencyKey },
-          create: {
-            id: randomUUID(),
-            paymentId,
-            kind: TransferKind.MERCHANT_PAYOUT,
-            amountUsdt: payment.merchantNetUsdt!,
-            networkCode: wallet.networkCode,
-            destinationAddressEnc: wallet.addressEncrypted,
-            providerWithdrawalSn: leg.providerTransferId,
-            txHash: leg.txHash,
-            idempotencyKey,
-            status: newStatus,
-          },
-          update: {
+          data: {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
             status: newStatus,
           },
         });
-
         await tx.payment.update({
           where: { id: paymentId },
           data: { merchantTransferStatus: newStatus },
@@ -245,14 +300,16 @@ export class PaymentOrchestrator {
       if (newStatus === TransferStatus.COMPLETED) {
         await this.syncPaymentGlobalStatus(paymentId);
       }
-    } catch (error) {
+    } catch {
+      // The transfer row remains SUBMITTED as a durable claim. A timeout/error is
+      // not proof of failure and must never authorize a second payout.
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: {
-          merchantTransferStatus: TransferStatus.FAILED,
+          merchantTransferStatus: TransferStatus.SUBMITTED,
           status: PaymentStatus.UNDER_REVIEW,
-          failureCode: 'MERCHANT_PAYOUT_UNCONFIRMED',
-          failureMessage: 'Merchant payout could not be confirmed. Provider reconciliation is required before another submission.',
+          failureCode: 'MERCHANT_PAYOUT_OUTCOME_UNKNOWN',
+          failureMessage: 'Merchant payout outcome is unknown. Reconcile with the provider before attempting another submission.',
         },
       });
     }
@@ -269,11 +326,20 @@ export class PaymentOrchestrator {
       return;
     }
 
-    // Recovery: query provider before retrying
     const currentAttempt = existing;
-    if (currentAttempt?.providerWithdrawalSn && this.provider.getTransferStatus) {
+    if (currentAttempt?.providerWithdrawalSn) {
+      if (!this.provider.getTransferStatus) {
+        await this.prisma.payment.update({
+          where: { id: paymentId },
+          data: { status: PaymentStatus.UNDER_REVIEW, failureCode: 'PLATFORM_PAYOUT_STATUS_UNAVAILABLE' },
+        });
+        return;
+      }
       try {
-        const remoteStatus = await this.provider.getTransferStatus(currentAttempt.providerWithdrawalSn, currentAttempt.idempotencyKey);
+        const remoteStatus = await this.provider.getTransferStatus(
+          currentAttempt.providerWithdrawalSn,
+          currentAttempt.idempotencyKey,
+        );
         if (remoteStatus?.status === 'COMPLETED') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
@@ -289,37 +355,56 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
-          // The provider has confirmed a terminal failure. Preserve this attempt
-          // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
-            await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.FAILED } });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { platformTransferStatus: TransferStatus.FAILED },
+            });
           });
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
-        }
-        if (remoteStatus?.status === 'PENDING') {
+        } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
-            await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.PROCESSING } });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { platformTransferStatus: TransferStatus.PROCESSING },
+            });
           });
           return;
+        } else if (remoteStatus === null && currentAttempt.status !== TransferStatus.FAILED) {
+          await this.prisma.transfer.update({
+            where: { id: currentAttempt.id },
+            data: { status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null },
+          });
+          existing = { ...currentAttempt, status: TransferStatus.CREATED, providerWithdrawalSn: null, txHash: null };
         }
-        // null means the provider explicitly reported that this reference was not found.
       } catch {
-        // A status lookup failure is ambiguous. Never submit another payout while its outcome is unknown.
         return;
       }
+    } else if (currentAttempt && currentAttempt.status !== TransferStatus.CREATED) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'PLATFORM_PAYOUT_REFERENCE_MISSING',
+          failureMessage: 'A platform payout attempt was claimed but no provider reference was stored. Manual provider reconciliation is required before retrying.',
+        },
+      });
+      return;
     }
 
-    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { walletDestination: true } });
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: { walletDestination: true },
+    });
     if (!payment.commissionUsdt) return;
 
-    // The platform commission must use the merchant payout chain. Never fall back
-    // to an unencrypted environment variable or an unrelated network wallet.
-    const platformWalletRecord = await this.prisma.platformWallet.findUnique({ where: { networkCode: payment.walletDestination.networkCode } });
+    const platformWalletRecord = await this.prisma.platformWallet.findUnique({
+      where: { networkCode: payment.walletDestination.networkCode },
+    });
     const platformWalletEnc = platformWalletRecord?.isEnabled ? platformWalletRecord.addressEncrypted : null;
     const platformNetwork = payment.walletDestination.networkCode;
-
     if (!platformWalletRecord || !platformWalletRecord.isEnabled || !platformWalletEnc) {
       await this.prisma.payment.update({
         where: { id: paymentId },
@@ -328,15 +413,45 @@ export class PaymentOrchestrator {
       return;
     }
 
-    // Decrypt platform wallet before sending to provider (audit item #7)
     const platformWallet = decryptPii(platformWalletEnc);
-
     const commissionAmount = payment.commissionUsdt;
-    if (!commissionAmount) return;
-
     const idempotencyKey = existing?.status === TransferStatus.FAILED
-      ? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1)
-      : existing?.idempotencyKey ?? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, 1);
+      ? transferAttemptIdempotencyKey(
+          paymentId,
+          TransferKind.PLATFORM_COMMISSION,
+          Number(existing.idempotencyKey.split(':v').at(-1) ?? 1) + 1,
+        )
+      : existing?.idempotencyKey
+        ?? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, 1);
+
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const attempt = await tx.transfer.upsert({
+        where: { idempotencyKey },
+        create: {
+          id: randomUUID(),
+          paymentId,
+          kind: TransferKind.PLATFORM_COMMISSION,
+          amountUsdt: commissionAmount,
+          networkCode: platformNetwork,
+          destinationAddressEnc: platformWalletRecord.addressEncrypted,
+          idempotencyKey,
+          status: TransferStatus.CREATED,
+        },
+        update: {},
+      });
+      const claim = await tx.transfer.updateMany({
+        where: { id: attempt.id, status: TransferStatus.CREATED },
+        data: { status: TransferStatus.SUBMITTED },
+      });
+      if (claim.count !== 1) return false;
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { platformTransferStatus: TransferStatus.SUBMITTED },
+      });
+      return true;
+    });
+    if (!claimed) return;
+
     try {
       const leg = await this.provider.settlePlatformCommission({
         platformWallet,
@@ -344,30 +459,22 @@ export class PaymentOrchestrator {
         amountUsdt: commissionAmount.toString(),
       }, idempotencyKey);
 
-      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
+      if (!leg.providerTransferId?.trim()) {
+        throw new Error('provider_transfer_reference_missing');
+      }
+      const newStatus = leg.status === 'COMPLETED'
+        ? TransferStatus.COMPLETED
+        : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
 
       await this.prisma.$transaction(async (tx) => {
-        await tx.transfer.upsert({
+        await tx.transfer.update({
           where: { idempotencyKey },
-          create: {
-            id: randomUUID(),
-            paymentId,
-            kind: TransferKind.PLATFORM_COMMISSION,
-            amountUsdt: commissionAmount,
-            networkCode: platformNetwork,
-            destinationAddressEnc: platformWalletRecord.addressEncrypted,
-            providerWithdrawalSn: leg.providerTransferId,
-            txHash: leg.txHash,
-            idempotencyKey,
-            status: newStatus,
-          },
-          update: {
+          data: {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
             status: newStatus,
           },
         });
-
         await tx.payment.update({
           where: { id: paymentId },
           data: { platformTransferStatus: newStatus },
@@ -377,23 +484,22 @@ export class PaymentOrchestrator {
       if (newStatus === TransferStatus.COMPLETED) {
         await this.syncPaymentGlobalStatus(paymentId);
       }
-    } catch (error) {
+    } catch {
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: {
-          platformTransferStatus: TransferStatus.FAILED,
+          platformTransferStatus: TransferStatus.SUBMITTED,
           status: PaymentStatus.UNDER_REVIEW,
-          failureCode: 'PLATFORM_PAYOUT_UNCONFIRMED',
-          failureMessage: 'Platform commission payout could not be confirmed. Provider reconciliation is required before another submission.',
+          failureCode: 'PLATFORM_PAYOUT_OUTCOME_UNKNOWN',
+          failureMessage: 'Platform commission payout outcome is unknown. Reconcile with the provider before attempting another submission.',
         },
       });
     }
   }
 
   /**
-   * Syncs the global Payment.status based on independent leg statuses.
-   * COMPLETED only when BOTH legs are COMPLETED.
-   * FAILED if either leg is FAILED and the other is not still PROCESSING.
+   * Completes the payment only after both independent beneficiary transfers settle.
+   * A provider/network error never changes a submitted transfer to FAILED.
    */
   private async syncPaymentGlobalStatus(paymentId: string): Promise<void> {
     const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
@@ -414,18 +520,31 @@ export class PaymentOrchestrator {
         data: {
           status: PaymentStatus.UNDER_REVIEW,
           failureCode: 'PAYOUT_LEG_REQUIRES_REVIEW',
-          failureMessage: payment.failureMessage ?? 'At least one payout leg requires provider reconciliation.',
+          failureMessage: payment.failureMessage ?? 'At least one payout leg has a confirmed terminal failure and requires reconciliation.',
         },
       });
       return;
     }
 
-    // At least one leg completed, none failed → partial state
-    if (merchant === TransferStatus.COMPLETED || platform === TransferStatus.COMPLETED) {
+    if (merchant === TransferStatus.COMPLETED && platform !== TransferStatus.COMPLETED) {
       await this.prisma.payment.update({
         where: { id: paymentId },
-        data: { status: PaymentStatus.COMMISSION_TRANSFER_PENDING },
+        data: { status: PaymentStatus.PLATFORM_PAYOUT_PENDING },
       });
+      return;
     }
+
+    if (platform === TransferStatus.COMPLETED && merchant !== TransferStatus.COMPLETED) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: { status: PaymentStatus.MERCHANT_PAYOUT_PENDING },
+      });
+      return;
+    }
+
+    await this.prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: PaymentStatus.COMMISSION_TRANSFER_PENDING },
+    });
   }
 }
