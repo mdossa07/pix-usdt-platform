@@ -31,14 +31,8 @@ export async function consumeRecoveryCode(
 ): Promise<boolean> {
   if (!isRecoveryCode(value)) return false;
   const codeHash = hashRecoveryCode(value);
-  const record = await db.userTwoFactorRecoveryCode.findFirst({
-    where: { userId, codeHash, usedAt: null },
-    select: { id: true },
-  });
-  if (!record) return false;
-
   const consumed = await db.userTwoFactorRecoveryCode.updateMany({
-    where: { id: record.id, userId, usedAt: null },
+    where: { userId, codeHash, usedAt: null },
     data: { usedAt },
   });
   return consumed.count === 1;
