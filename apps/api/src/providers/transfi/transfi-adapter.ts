@@ -67,6 +67,15 @@ export class TransFiAdapter implements PaymentProvider {
   constructor() {
     this.client = new TransFiClient();
     this.mode = config.PAYMENTS_MODE as 'mock' | 'sandbox' | 'live';
+
+    // Fail closed: the current adapter still needs the v3 sender/recipient
+    // registration, BRL paymentCode discovery, and approved payout rail mapping.
+    // Do not let a future config change accidentally enable the incomplete payloads below.
+    if (this.mode !== 'mock') {
+      throw new Error(
+        'TRANSFI_ADAPTER_NOT_HOMOLOGATED: complete v3 sender/recipient and PIX rail integration before sandbox/live execution.',
+      );
+    }
   }
 
   async createPixCharge(input: CreatePixChargeInput, idempotencyKey: string): Promise<PixCharge> {
