@@ -113,24 +113,32 @@ export default function AdminDashboard() {
       return;
     }
     setLoading(true);
-    Promise.all([
-      apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
-      apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
-      apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
-      apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
-      apiRequest<ProviderStatus>('/v1/admin/provider-status', {}, token),
-      apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token),
-    ])
-      .then(([p, m, a, w, provider, twoFactor]) => {
-        setPayments(p);
-        setMerchants(m);
-        setAuditLogs(a);
-        setWallets(w);
-        setProviderStatus(provider);
+    apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token)
+      .then(async (twoFactor) => {
         setTwoFactorStatus(twoFactor);
+        if (!twoFactor.enabled) {
+          setTab('overview');
+          return null;
+        }
+        const [p, m, a, w, provider] = await Promise.all([
+          apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
+          apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
+          apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
+          apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
+          apiRequest<ProviderStatus>('/v1/admin/provider-status', {}, token),
+        ]);
+        return { p, m, a, w, provider };
+      })
+      .then((data) => {
+        if (!data) return;
+        setPayments(data.p);
+        setMerchants(data.m);
+        setAuditLogs(data.a);
+        setWallets(data.w);
+        setProviderStatus(data.provider);
       })
       .catch((err) => {
-        if (err instanceof Error && err.message === 'unauthorized') {
+        if (err instanceof Error && ['unauthorized', 'two_factor_required'].includes(err.message)) {
           localStorage.removeItem('pixsplit_authenticated');
           localStorage.removeItem('pixsplit_token');
           sessionStorage.removeItem('pixsplit_csrf');
@@ -266,10 +274,11 @@ export default function AdminDashboard() {
     setTwoFactorBusy(true);
     setTwoFactorNotice(null);
     try {
-      const enabled = await apiRequest<{ recoveryCodes: string[] }>('/v1/admin/2fa/enable', {
+      const enabled = await apiRequest<{ recoveryCodes: string[]; csrfToken: string }>('/v1/admin/2fa/enable', {
         method: 'POST',
         body: JSON.stringify({ code: twoFactorCode }),
       }, token);
+      sessionStorage.setItem('pixsplit_csrf', enabled.csrfToken);
       setTwoFactorRecoveryCodes(enabled.recoveryCodes);
       const status = await apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token);
       setTwoFactorStatus(status);
@@ -306,13 +315,15 @@ export default function AdminDashboard() {
     }
   };
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Visão Geral' },
-    { id: 'merchants', label: 'Comerciantes' },
-    { id: 'wallets', label: 'Carteiras' },
-    { id: 'reconciliation', label: 'Conciliação' },
-    { id: 'audit', label: 'Auditoria' },
-  ];
+  const tabs: { id: Tab; label: string }[] = twoFactorStatus?.enabled
+    ? [
+      { id: 'overview', label: 'Visão Geral' },
+      { id: 'merchants', label: 'Comerciantes' },
+      { id: 'wallets', label: 'Carteiras' },
+      { id: 'reconciliation', label: 'Conciliação' },
+      { id: 'audit', label: 'Auditoria' },
+    ]
+    : [{ id: 'overview', label: 'Segurança' }];
 
   return (
     <WorkspaceShell area="Administração">
@@ -322,9 +333,11 @@ export default function AdminDashboard() {
           <h2 className="text-2xl font-bold text-slate-900">Painel Administrativo</h2>
           <p className="text-sm text-slate-500 mt-1">Gestão completa da plataforma PixSplit</p>
         </div>
-        <button onClick={exportCsv} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-lg transition-colors">
-          Exportar CSV
-        </button>
+        {twoFactorStatus?.enabled && (
+          <button onClick={exportCsv} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-lg transition-colors">
+            Exportar CSV
+          </button>
+        )}
       </div>
 
       <div className="flex gap-1 border-b border-slate-200 pb-px">
@@ -430,7 +443,14 @@ export default function AdminDashboard() {
               {twoFactorNotice && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{twoFactorNotice}</p>}
             </section>
           )}
-          {providerStatus && (
+          {twoFactorStatus && !twoFactorStatus.enabled && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+              A autenticação de dois fatores é obrigatória para acessar dados e operações administrativas. Conclua a configuração do autenticador e guarde os códigos de recuperação para liberar o painel.
+            </div>
+          )}
+          {twoFactorStatus?.enabled && (
+            <>
+          {twoFactorStatus?.enabled && providerStatus && (
             <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 space-y-4" aria-label="Situação da integração financeira">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
@@ -541,6 +561,8 @@ export default function AdminDashboard() {
               </div>
             )}
           </div>
+            </>
+          )}
         </div>
       )}
 
