@@ -27,6 +27,9 @@ import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/ide
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
+import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
+import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
+import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -738,9 +741,15 @@ app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async
   if (payment.status !== PaymentStatus.PIX_PENDING) return reply.code(409).send({ error: 'payment_not_pending' });
   // This endpoint exists only in non-production mock environments. Transition the
   // payment first so the worker's PIX_CONFIRMED guard cannot silently drop the job.
-  const confirmed = await prisma.payment.updateMany({
-    where: { id, merchantId: merchant.id, status: PaymentStatus.PIX_PENDING },
-    data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+  const confirmed = await prisma.$transaction(async tx => {
+    const changed = await tx.payment.updateMany({
+      where: { id, merchantId: merchant.id, status: PaymentStatus.PIX_PENDING },
+      data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+    });
+    if (changed.count === 1) {
+      await createMerchantWebhookDeliveries(tx, id, 'payment.status_changed');
+    }
+    return changed;
   });
   if (confirmed.count !== 1) return reply.code(409).send({ error: 'payment_state_changed' });
   await enqueueSettlement(id, payment.amountBrlCents);
@@ -776,9 +785,15 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   if (event.data.type !== 'withdrawal' && event.data.purchase_id && state === 'PIX_CONFIRMED') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
-        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
+          data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       if (changed.count === 1) {
         await enqueueSettlement(payment.id, payment.amountBrlCents);
@@ -794,9 +809,15 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
-        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
+          data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       processed = changed.count === 1;
     } else if (payment?.status === PaymentStatus.FAILED) processed = true;
@@ -843,9 +864,15 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   if (payload.entityId && newState && payload.entityType === 'order' && payload.orderType === 'payin') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
     if (payment && newState === 'PAID' && openPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: openPaymentStatuses } },
-        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: openPaymentStatuses } },
+          data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       if (changed.count === 1) {
         await enqueueSettlement(payment.id, payment.amountBrlCents);
@@ -858,9 +885,15 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     } else if (payment && newState === 'PAID' && postPaymentStatuses.includes(payment.status)) {
       processed = true;
     } else if (payment && newState === 'FAILED' && openPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: openPaymentStatuses } },
-        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: openPaymentStatuses } },
+          data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       processed = changed.count === 1;
     } else if (payment && newState === 'FAILED' && payment.status === PaymentStatus.FAILED) {
@@ -875,6 +908,149 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed, duplicate }, 'TransFi webhook recorded');
   if (!processed) return reply.code(503).header('retry-after', '30').send({ received: true, processed: false, retry: true });
   return reply.code(200).send({ received: true, processed, duplicate });
+});
+
+// --- Merchant outbound webhooks ---
+app.post('/v1/merchant/webhooks', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({
+    url: z.string().min(1).max(2048),
+    events: z.array(z.enum(MERCHANT_WEBHOOK_EVENTS)).min(1).max(MERCHANT_WEBHOOK_EVENTS.length),
+  }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint', details: parsed.error.flatten() });
+  if (new Set(parsed.data.events).size !== parsed.data.events.length) {
+    return reply.code(400).send({ error: 'duplicate_webhook_events' });
+  }
+
+  let target: Awaited<ReturnType<typeof resolvePublicWebhookTarget>>;
+  try {
+    target = await resolvePublicWebhookTarget(parsed.data.url);
+  } catch (error) {
+    return reply.code(400).send({
+      error: error instanceof Error ? error.message : 'unsafe_webhook_url',
+    });
+  }
+
+  const activeCount = await prisma.merchantWebhookEndpoint.count({
+    where: { merchantId: merchant.id, isEnabled: true },
+  });
+  if (activeCount >= 10) return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+
+  const signingSecret = randomBytes(32).toString('base64url');
+  const endpoint = await prisma.merchantWebhookEndpoint.create({
+    data: {
+      merchantId: merchant.id,
+      url: target.url.toString(),
+      events: parsed.data.events,
+      signingSecretEncrypted: encryptPii(signingSecret),
+    },
+  });
+  await audit(request, 'MERCHANT_WEBHOOK_CREATED', 'MERCHANT_WEBHOOK_ENDPOINT', endpoint.id, {
+    host: target.url.hostname,
+    events: parsed.data.events,
+  });
+  return reply.code(201).send({
+    id: endpoint.id,
+    url: endpoint.url,
+    events: endpoint.events,
+    isEnabled: endpoint.isEnabled,
+    createdAt: endpoint.createdAt,
+    signingSecret,
+    warning: 'Guarde o segredo agora. Ele não será exibido novamente.',
+  });
+});
+
+app.get('/v1/merchant/webhooks', { preHandler: [app.authenticate] }, async (request) => {
+  const merchant = await merchantFor(request);
+  const endpoints = await prisma.merchantWebhookEndpoint.findMany({
+    where: { merchantId: merchant.id },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, url: true, events: true, isEnabled: true, createdAt: true, updatedAt: true },
+  });
+  return { endpoints };
+});
+
+app.post('/v1/merchant/webhooks/:endpointId/rotate-secret', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
+  const endpoint = await prisma.merchantWebhookEndpoint.findFirst({
+    where: { id: parsed.data.endpointId, merchantId: merchant.id },
+    select: { id: true },
+  });
+  if (!endpoint) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+
+  const signingSecret = randomBytes(32).toString('base64url');
+  await prisma.merchantWebhookEndpoint.update({
+    where: { id: endpoint.id },
+    data: { signingSecretEncrypted: encryptPii(signingSecret) },
+  });
+  await audit(request, 'MERCHANT_WEBHOOK_SECRET_ROTATED', 'MERCHANT_WEBHOOK_ENDPOINT', endpoint.id);
+  return {
+    success: true,
+    signingSecret,
+    warning: 'O segredo anterior foi invalidado. Atualize o consumidor agora.',
+  };
+});
+
+app.delete('/v1/merchant/webhooks/:endpointId', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
+  const endpoint = await prisma.merchantWebhookEndpoint.findFirst({
+    where: { id: parsed.data.endpointId, merchantId: merchant.id, isEnabled: true },
+    select: { id: true },
+  });
+  if (!endpoint) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+  await prisma.$transaction([
+    prisma.merchantWebhookEndpoint.update({
+      where: { id: endpoint.id },
+      data: { isEnabled: false },
+    }),
+    prisma.merchantWebhookDelivery.updateMany({
+      where: { endpointId: endpoint.id, status: 'PENDING' },
+      data: { status: 'FAILED', lastErrorCode: 'webhook_endpoint_disabled' },
+    }),
+  ]);
+  await audit(request, 'MERCHANT_WEBHOOK_DISABLED', 'MERCHANT_WEBHOOK_ENDPOINT', endpoint.id);
+  return { success: true, disabled: true };
+});
+
+app.get('/v1/merchant/webhooks/:endpointId/deliveries', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
+  const endpoint = await prisma.merchantWebhookEndpoint.findFirst({
+    where: { id: parsed.data.endpointId, merchantId: merchant.id },
+    select: { id: true },
+  });
+  if (!endpoint) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+
+  const deliveries = await prisma.merchantWebhookDelivery.findMany({
+    where: { endpointId: endpoint.id },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+    select: {
+      id: true,
+      eventName: true,
+      eventId: true,
+      status: true,
+      attempts: true,
+      nextAttemptAt: true,
+      lastAttemptAt: true,
+      deliveredAt: true,
+      responseStatus: true,
+      lastErrorCode: true,
+      createdAt: true,
+    },
+  });
+  return { deliveries };
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
@@ -1236,23 +1412,27 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
   }, paymentExternalId);
 
   // Conversion and 98/2 split happen only after a verified PIX confirmation.
-  const payment = await prisma.payment.create({
-    data: {
-      merchantId: merchant.merchantId,
-      walletDestinationId,
-      externalId: paymentExternalId,
-      amountBrlCents: BigInt(amountBrlCents),
-      commissionBps: config.PLATFORM_COMMISSION_BPS,
-      status: PaymentStatus.PIX_PENDING,
-      providerOrderId: charge.providerChargeId,
-      pixQrCodeBase64: charge.qrCodeBase64 ?? null,
-      pixCopyPaste: charge.copyPaste,
-      expiresAt: charge.expiresAt,
-      payerName: payerName || null,
-      payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
-      payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
-      description: description || null,
-    },
+  const payment = await prisma.$transaction(async tx => {
+    const created = await tx.payment.create({
+      data: {
+        merchantId: merchant.merchantId,
+        walletDestinationId,
+        externalId: paymentExternalId,
+        amountBrlCents: BigInt(amountBrlCents),
+        commissionBps: config.PLATFORM_COMMISSION_BPS,
+        status: PaymentStatus.PIX_PENDING,
+        providerOrderId: charge.providerChargeId,
+        pixQrCodeBase64: charge.qrCodeBase64 ?? null,
+        pixCopyPaste: charge.copyPaste,
+        expiresAt: charge.expiresAt,
+        payerName: payerName || null,
+        payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
+        payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
+        description: description || null,
+      },
+    });
+    await createMerchantWebhookDeliveries(tx, created.id, 'payment.created');
+    return created;
   });
 
   // DO NOT enqueue settlement here. Settlement is triggered ONLY after
@@ -1286,6 +1466,9 @@ app.setErrorHandler((error, request, reply) => {
 // Mock financial workers must never run in production.
 const settlementWorker = mockFinancialExecutionEnabled ? startSettlementWorker() : null;
 const retryWorker = mockFinancialExecutionEnabled ? startRetryWorker() : null;
+const merchantWebhookDispatcher = startMerchantWebhookDispatcher(prisma, error => {
+  app.log.error({ err: error instanceof Error ? error.name : 'unknown' }, 'Merchant webhook dispatcher cycle failed');
+});
 const reconciliation = new ReconciliationService(prisma);
 const reconciliationTimer = mockFinancialExecutionEnabled ? setInterval(() => {
   void reconciliation.reconcile().catch((error) => {
@@ -1298,6 +1481,7 @@ const shutdown = async () => {
   if (reconciliationTimer) clearInterval(reconciliationTimer);
   await settlementWorker?.close();
   await retryWorker?.close();
+  await merchantWebhookDispatcher.close();
   await closeQueues();
   await app.close();
   await prisma.$disconnect();

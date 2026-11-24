@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
 import type { PaymentProvider } from '../providers/provider-contract.js';
 import { decryptPii } from '../security/crypto.js';
+import { createMerchantWebhookDeliveries } from '../webhooks/outbound-outbox.js';
 
 /**
  * Orchestrates the exact two-beneficiary settlement flow.
@@ -61,6 +62,7 @@ export class PaymentOrchestrator {
         });
 
         if (claimed.count === 1) {
+          await createMerchantWebhookDeliveries(tx, paymentId, 'payment.status_changed');
           await tx.ledgerEntry.createMany({
             data: [
               { paymentId, accountCode: 'PIX_RECEIVABLE', asset: 'BRL', direction: LedgerDirection.DEBIT, amount: `${brlWhole}.${brlFraction}`, status: LedgerStatus.POSTED, reference: `${paymentId}:brl:recv` },
@@ -594,51 +596,61 @@ export class PaymentOrchestrator {
    * A provider/network error never changes a submitted transfer to FAILED.
    */
   private async syncPaymentGlobalStatus(paymentId: string): Promise<void> {
-    // Compare-and-set the aggregate against the exact two leg states we read.
-    // Concurrent webhook/worker updates make the predicate fail, forcing a fresh
-    // read instead of allowing a stale aggregate to overwrite a newer state.
+    // Compare-and-set both payout legs and the aggregate status. The delivery
+    // outbox is inserted in the same transaction as the status transition.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const payment = await this.prisma.payment.findUniqueOrThrow({
-        where: { id: paymentId },
-        select: {
-          merchantTransferStatus: true,
-          platformTransferStatus: true,
-          completedAt: true,
-          failureCode: true,
-          failureMessage: true,
-        },
-      });
-      const status = derivePaymentAggregateStatus(
-        payment.merchantTransferStatus,
-        payment.platformTransferStatus,
-      );
-      const data: {
-        status: PaymentStatus;
-        completedAt?: Date;
-        failureCode?: string | null;
-        failureMessage?: string | null;
-      } = { status };
+      const updatedCount = await this.prisma.$transaction(async tx => {
+        const payment = await tx.payment.findUniqueOrThrow({
+          where: { id: paymentId },
+          select: {
+            status: true,
+            merchantTransferStatus: true,
+            platformTransferStatus: true,
+            completedAt: true,
+            failureCode: true,
+            failureMessage: true,
+          },
+        });
+        const status = derivePaymentAggregateStatus(
+          payment.merchantTransferStatus,
+          payment.platformTransferStatus,
+        );
+        const data: {
+          status: PaymentStatus;
+          completedAt?: Date;
+          failureCode?: string | null;
+          failureMessage?: string | null;
+        } = { status };
 
-      if (status === PaymentStatus.COMPLETED) {
-        data.completedAt = payment.completedAt ?? new Date();
-        data.failureCode = null;
-        data.failureMessage = null;
-      } else if (status === PaymentStatus.UNDER_REVIEW) {
-        data.failureCode = payment.failureCode ?? 'PAYOUT_REQUIRES_REVIEW';
-        data.failureMessage = payment.failureMessage ?? 'A payout leg requires reconciliation before this payment can complete.';
-      }
+        if (status === PaymentStatus.COMPLETED) {
+          data.completedAt = payment.completedAt ?? new Date();
+          data.failureCode = null;
+          data.failureMessage = null;
+        } else if (status === PaymentStatus.UNDER_REVIEW) {
+          data.failureCode = payment.failureCode ?? 'PAYOUT_REQUIRES_REVIEW';
+          data.failureMessage = payment.failureMessage ?? 'A payout leg requires reconciliation before this payment can complete.';
+        }
 
-      const updated = await this.prisma.payment.updateMany({
-        where: {
-          id: paymentId,
-          merchantTransferStatus: payment.merchantTransferStatus,
-          platformTransferStatus: payment.platformTransferStatus,
-        },
-        data,
+        const updated = await tx.payment.updateMany({
+          where: {
+            id: paymentId,
+            status: payment.status,
+            merchantTransferStatus: payment.merchantTransferStatus,
+            platformTransferStatus: payment.platformTransferStatus,
+          },
+          data,
+        });
+        if (updated.count === 1 && payment.status !== status) {
+          await createMerchantWebhookDeliveries(tx, paymentId, 'payment.status_changed');
+          if (status === PaymentStatus.COMPLETED) {
+            await createMerchantWebhookDeliveries(tx, paymentId, 'payment.completed');
+          }
+        }
+        return updated.count;
       });
-      if (updated.count === 1) return;
+      if (updatedCount === 1) return;
     }
     // Sustained contention is safe: leave the aggregate for the next
-    // reconciliation pass rather than writing a potentially stale status.
+    // reconciliation pass rather than writing a potentially stale state.
   }
 }

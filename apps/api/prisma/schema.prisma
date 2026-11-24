@@ -73,6 +73,13 @@ enum LedgerStatus {
   REVERSED
 }
 
+enum MerchantWebhookDeliveryStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -136,6 +143,7 @@ model Merchant {
   wallets               WalletDestination[]
   payments              Payment[]
   apiKeys               MerchantApiKey[]
+  webhookEndpoints      MerchantWebhookEndpoint[]
 }
 
 model WalletDestination {
@@ -252,6 +260,44 @@ model MerchantApiKey {
   revokedAt             DateTime?
   createdAt             DateTime @default(now())
   @@index([merchantId, revokedAt])
+}
+
+
+model MerchantWebhookEndpoint {
+  id                    String   @id @default(cuid())
+  merchantId            String
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  url                   String
+  events                String[]
+  signingSecretEncrypted String
+  isEnabled             Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  deliveries            MerchantWebhookDelivery[]
+
+  @@index([merchantId, isEnabled])
+}
+
+model MerchantWebhookDelivery {
+  id               String                         @id @default(cuid())
+  endpointId       String
+  endpoint         MerchantWebhookEndpoint        @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventName        String
+  eventId          String
+  payload          Json
+  status           MerchantWebhookDeliveryStatus  @default(PENDING)
+  attempts         Int                            @default(0)
+  nextAttemptAt    DateTime                       @default(now())
+  lockedAt         DateTime?
+  lastAttemptAt    DateTime?
+  deliveredAt      DateTime?
+  responseStatus   Int?
+  lastErrorCode    String?
+  createdAt        DateTime                       @default(now())
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextAttemptAt, lockedAt])
+  @@index([endpointId, createdAt])
 }
 
 model WebhookEvent {
