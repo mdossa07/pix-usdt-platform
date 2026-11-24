@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
+import WorkspaceShell from '../../components/workspace-shell';
 
 interface PaymentRecord {
   id: string;
@@ -128,6 +129,7 @@ export default function AdminDashboard() {
   ];
 
   return (
+    <WorkspaceShell area="Administração">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -287,7 +289,7 @@ export default function AdminDashboard() {
 
       {tab === 'reconciliation' && (
         <div className="space-y-4">
-          <div className="bg-amber-500/5 border border-amber-200 rounded-xl p-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
             <p className="text-amber-700 text-sm font-medium">
               ⚠ {stuckPayments.length} operação(ões) em estado não-terminal detectada(s). Use "Reprocessar" para enfileirar nova tentativa de liquidação.
             </p>
@@ -364,5 +366,6 @@ export default function AdminDashboard() {
         </div>
       )}
     </div>
+    </WorkspaceShell>
   );
 }

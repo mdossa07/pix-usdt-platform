@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { apiRequest } from '../../lib/api';
+import WorkspaceShell from '../../components/workspace-shell';
 
 interface Wallet {
   id: string;
@@ -154,6 +155,7 @@ export default function MerchantDashboard() {
   ];
 
   return (
+    <WorkspaceShell area="Área do comerciante">
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -264,7 +266,7 @@ export default function MerchantDashboard() {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-mono text-sm text-emerald-700">{w.networkCode}</span>
                       {w.isDefault && <span className="text-[10px] uppercase bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">Padrão</span>}
-                      <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${w.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-700' : 'bg-slate-500/20 text-slate-500'}`}>{w.status}</span>
+                      <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${w.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{w.status}</span>
                     </div>
                     <p className="font-mono text-xs text-slate-500 truncate max-w-md">...{w.addressLast8}</p>
                   </div>
@@ -294,7 +296,7 @@ export default function MerchantDashboard() {
                 <div key={w.id} className="bg-white border border-slate-200 rounded-xl p-5">
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-mono text-sm text-slate-800 truncate">{w.url}</span>
-                    <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${w.isActive ? 'bg-emerald-500/20 text-emerald-700' : 'bg-slate-500/20 text-slate-500'}`}>
+                    <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${w.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                       {w.isActive ? 'Ativo' : 'Inativo'}
                     </span>
                   </div>
@@ -382,5 +384,6 @@ export default function MerchantDashboard() {
         </div>
       )}
     </div>
+    </WorkspaceShell>
   );
 }
