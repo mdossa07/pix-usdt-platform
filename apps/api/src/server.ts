@@ -20,7 +20,7 @@ import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
-import { claimWebhookEvent, completeWebhookEvent } from './webhooks/event-claim.js';
+import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -375,7 +375,9 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     } else if (payment?.status === PaymentStatus.FAILED) processed = true;
   }
   if (processed) await completeWebhookEvent(prisma, claim.eventId, claim.token);
+  else await releaseWebhookEvent(prisma, claim.eventId, claim.token);
   request.log.info({ eventId: event.event_id, eventType: event.webhook_type, state, processed, duplicate }, 'Foxbit webhook recorded');
+  if (!processed) return reply.code(503).header('retry-after', '30').send({ received: true, processed: false, retry: true });
   return reply.code(200).send({ received: true, processed, duplicate });
 });
 // --- TransFi Webhook Handler ---
@@ -442,7 +444,9 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   }
 
   if (processed) await completeWebhookEvent(prisma, claim.eventId, claim.token);
+  else await releaseWebhookEvent(prisma, claim.eventId, claim.token);
   request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed, duplicate }, 'TransFi webhook recorded');
+  if (!processed) return reply.code(503).header('retry-after', '30').send({ received: true, processed: false, retry: true });
   return reply.code(200).send({ received: true, processed, duplicate });
 });
 
