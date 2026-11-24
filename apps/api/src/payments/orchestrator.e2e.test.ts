@@ -450,4 +450,61 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
 
     expect(merchantUnits + platformUnits).toBe(totalFromDb);
   });
+
+  it('Scenario J: Recover the platform commission by original partnerId when provider ID was never persisted', async () => {
+    const payment = await prisma.payment.create({
+      data: {
+        externalId: 'ext-j-platform-partner-id-recovery',
+        merchantId: 'merch-1',
+        walletDestinationId: 'wallet-dest-1',
+        status: PaymentStatus.UNDER_REVIEW,
+        amountBrlCents: BigInt(50000),
+        providerGrossUsdt: '9090',
+        merchantNetUsdt: '8908',
+        commissionUsdt: '182',
+        fxRate: '5.5',
+        paidAt: new Date(),
+        merchantTransferStatus: TransferStatus.COMPLETED,
+        platformTransferStatus: TransferStatus.SUBMITTED,
+      },
+    });
+
+    const idempotencyKey = `${payment.id}:platform:v1`;
+    await prisma.transfer.create({
+      data: {
+        id: 'transfer-j-platform',
+        paymentId: payment.id,
+        kind: TransferKind.PLATFORM_COMMISSION,
+        amountUsdt: '182',
+        networkCode: 'TRON',
+        destinationAddressEnc: 'enc:TPlatformWalletAddress123456789abcdef',
+        providerWithdrawalSn: null,
+        idempotencyKey,
+        status: TransferStatus.SUBMITTED,
+      },
+    });
+
+    provider.platformCompletedRemotely = true;
+    await orchestrator.settlePlatformCommission(payment.id);
+
+    const updated = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      include: { transfers: true },
+    });
+    const platformTransfer = updated.transfers.find((t) => t.kind === TransferKind.PLATFORM_COMMISSION)!;
+
+    expect(platformTransfer.status).toBe(TransferStatus.COMPLETED);
+    expect(platformTransfer.providerWithdrawalSn).toBe('platform-recovered-by-partner-id');
+    expect(updated.platformTransferStatus).toBe(TransferStatus.COMPLETED);
+    expect(updated.status).toBe(PaymentStatus.COMPLETED);
+    expect(provider.callLog.filter((entry) => entry.method === 'settlePlatformCommission')).toHaveLength(0);
+
+    const recoveryCall = provider.callLog.find((entry) =>
+      entry.method === 'getTransferStatus'
+      && entry.args[0] === null
+      && entry.args[1] === idempotencyKey,
+    );
+    expect(recoveryCall).toBeDefined();
+  });
+
 });
