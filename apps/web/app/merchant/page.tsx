@@ -324,7 +324,7 @@ export default function MerchantDashboard() {
 
       if (!pending || pending.fingerprint !== fingerprint) {
         try {
-          const stored = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null') as
+          const stored = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as
             | { fingerprint: string; key: string }
             | null;
           pending = stored?.fingerprint === fingerprint && typeof stored.key === 'string'
@@ -341,7 +341,7 @@ export default function MerchantDashboard() {
 
       pendingPaymentIdempotency.current = pending;
       try {
-        sessionStorage.setItem(storageKey, JSON.stringify(pending));
+        localStorage.setItem(storageKey, JSON.stringify(pending));
       } catch {
         // The in-memory ref still preserves the key while the page stays open.
       }
@@ -363,10 +363,10 @@ export default function MerchantDashboard() {
 
       pendingPaymentIdempotency.current = null;
       try {
-        const stored = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null') as
+        const stored = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as
           | { fingerprint: string; key: string }
           | null;
-        if (stored?.key === pending.key) sessionStorage.removeItem(storageKey);
+        if (stored?.key === pending.key) localStorage.removeItem(storageKey);
       } catch {
         // Ignore storage cleanup failures after a successful API response.
       }
