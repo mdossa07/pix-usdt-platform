@@ -69,7 +69,7 @@ export class PaymentOrchestrator {
         return true;
       }
 
-      const resumableStatuses = [
+      const resumableStatuses: PaymentStatus[] = [
         PaymentStatus.CONVERSION_PENDING,
         PaymentStatus.CRYPTO_CREDITED,
         PaymentStatus.COMMISSION_TRANSFER_PENDING,
@@ -309,7 +309,7 @@ export class PaymentOrchestrator {
     const platformWalletEnc = platformWalletRecord?.isEnabled ? platformWalletRecord.addressEncrypted : null;
     const platformNetwork = payment.walletDestination.networkCode;
 
-    if (!platformWalletEnc) {
+    if (!platformWalletRecord || !platformWalletRecord.isEnabled || !platformWalletEnc) {
       await this.prisma.payment.update({
         where: { id: paymentId },
         data: { status: PaymentStatus.UNDER_REVIEW, failureMessage: 'Platform wallet not configured' },
