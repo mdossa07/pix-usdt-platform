@@ -1,4 +1,4 @@
-import type { PaymentProvider, CreatePixChargeInput, PixCharge, SettlementLeg } from '../provider-contract.js';
+import type { PaymentProvider, CreatePixChargeInput, PixCharge, SettlementLeg, TransferStatusResult } from '../provider-contract.js';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -52,6 +52,19 @@ export class FoxbitAdapter implements PaymentProvider {
       providerTransferId: `mock-platform-${idempotencyKey.slice(-12)}`,
       txHash: `0x${Buffer.from(idempotencyKey + ':platform').toString('hex').slice(0, 64)}`,
       status: 'COMPLETED',
+    };
+  }
+
+  async getTransferStatus(providerTransferId: string, _idempotencyKey: string): Promise<TransferStatusResult | null> {
+    if (this.mode !== 'mock') {
+      throw new Error('FoxbitAdapter live/sandbox transfer status check is not approved yet.');
+    }
+    // Mock: assume all known transfers are completed to allow orchestrator recovery testing
+    if (!providerTransferId.startsWith('mock-')) return null;
+    return {
+      status: 'COMPLETED',
+      txHash: `0x${Buffer.from(providerTransferId).toString('hex').slice(0, 64)}`,
+      providerReference: providerTransferId,
     };
   }
 }

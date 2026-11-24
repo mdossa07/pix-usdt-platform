@@ -7,8 +7,9 @@ import type { PaymentProvider } from '../providers/provider-contract.js';
  * Orchestrates the exact two-beneficiary settlement flow.
  * - Idempotent by paymentId + transfer kind.
  * - Never uses float arithmetic.
- * - Independent legs: merchant payout and platform commission never share state mutations.
+ * - Independent legs: merchant payout and platform commission have separate status fields.
  * - Fail-closed: partial failures leave explicit pending states for retry/reconciliation.
+ * - Timeout recovery: queries provider before re-sending to prevent double spend.
  */
 export class PaymentOrchestrator {
   constructor(
@@ -60,7 +61,43 @@ export class PaymentOrchestrator {
     const existing = await this.prisma.transfer.findFirst({
       where: { paymentId, kind: TransferKind.MERCHANT_PAYOUT },
     });
-    if (existing?.status === TransferStatus.COMPLETED || existing?.status === TransferStatus.PROCESSING) return;
+
+    // If already completed locally, just sync global state
+    if (existing?.status === TransferStatus.COMPLETED) {
+      await this.syncPaymentGlobalStatus(paymentId);
+      return;
+    }
+
+    // Recovery: if we have a provider ID but local status is stale/unknown, query provider first
+    if (existing?.providerWithdrawalSn && this.provider.getTransferStatus) {
+      try {
+        const remoteStatus = await this.provider.getTransferStatus(existing.providerWithdrawalSn, existing.idempotencyKey);
+        if (remoteStatus?.status === 'COMPLETED') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({
+              where: { id: existing.id },
+              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? existing.txHash },
+            });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { merchantTransferStatus: TransferStatus.COMPLETED },
+            });
+          });
+          await this.syncPaymentGlobalStatus(paymentId);
+          return;
+        }
+        if (remoteStatus?.status === 'FAILED') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
+            await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.FAILED } });
+          });
+          return;
+        }
+        // PENDING or null: fall through to retry with same idempotency key
+      } catch {
+        // Provider unreachable; proceed with cautious retry using existing idempotency key
+      }
+    }
 
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
@@ -76,7 +113,8 @@ export class PaymentOrchestrator {
       return;
     }
 
-    const idempotencyKey = `${paymentId}:merchant:${existing?.id ?? randomUUID()}`;
+    // Reuse existing idempotency key on retry to guarantee provider-side dedup
+    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:merchant:${randomUUID()}`;
     try {
       const leg = await this.provider.settleMerchantUsdt({
         merchantWallet: wallet.addressEncrypted,
@@ -92,6 +130,8 @@ export class PaymentOrchestrator {
         },
       }, idempotencyKey);
 
+      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING;
+
       await this.prisma.$transaction(async (tx) => {
         await tx.transfer.upsert({
           where: { idempotencyKey },
@@ -105,26 +145,32 @@ export class PaymentOrchestrator {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
             idempotencyKey,
-            status: leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING,
+            status: newStatus,
           },
           update: {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
-            status: leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING,
+            status: newStatus,
           },
         });
 
-        if (leg.status === 'COMPLETED') {
-          await tx.payment.update({
-            where: { id: paymentId },
-            data: { status: PaymentStatus.MERCHANT_PAYOUT_PENDING },
-          });
-        }
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: { merchantTransferStatus: newStatus },
+        });
       });
+
+      if (newStatus === TransferStatus.COMPLETED) {
+        await this.syncPaymentGlobalStatus(paymentId);
+      }
     } catch (error) {
       await this.prisma.payment.update({
         where: { id: paymentId },
-        data: { status: PaymentStatus.FAILED, failureMessage: `Merchant payout failed: ${(error as Error).message}` },
+        data: {
+          merchantTransferStatus: TransferStatus.FAILED,
+          status: PaymentStatus.FAILED,
+          failureMessage: `Merchant payout failed: ${(error as Error).message}`,
+        },
       });
     }
   }
@@ -133,12 +179,45 @@ export class PaymentOrchestrator {
     const existing = await this.prisma.transfer.findFirst({
       where: { paymentId, kind: TransferKind.PLATFORM_COMMISSION },
     });
-    if (existing?.status === TransferStatus.COMPLETED || existing?.status === TransferStatus.PROCESSING) return;
+
+    if (existing?.status === TransferStatus.COMPLETED) {
+      await this.syncPaymentGlobalStatus(paymentId);
+      return;
+    }
+
+    // Recovery: query provider before retrying
+    if (existing?.providerWithdrawalSn && this.provider.getTransferStatus) {
+      try {
+        const remoteStatus = await this.provider.getTransferStatus(existing.providerWithdrawalSn, existing.idempotencyKey);
+        if (remoteStatus?.status === 'COMPLETED') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({
+              where: { id: existing.id },
+              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? existing.txHash },
+            });
+            await tx.payment.update({
+              where: { id: paymentId },
+              data: { platformTransferStatus: TransferStatus.COMPLETED },
+            });
+          });
+          await this.syncPaymentGlobalStatus(paymentId);
+          return;
+        }
+        if (remoteStatus?.status === 'FAILED') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
+            await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.FAILED } });
+          });
+          return;
+        }
+      } catch {
+        // Provider unreachable; proceed with cautious retry
+      }
+    }
 
     const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     if (!payment.commissionUsdt) return;
 
-    // Platform wallet from DB (preferred) or env fallback
     const platformWalletRecord = await this.prisma.platformWallet.findFirst({ where: { isEnabled: true } });
     const platformWallet = platformWalletRecord?.addressEncrypted ?? process.env.PLATFORM_USDT_WALLET_ADDRESS;
     const platformNetwork = platformWalletRecord?.networkCode ?? process.env.PLATFORM_USDT_NETWORK ?? 'TRC20';
@@ -154,13 +233,15 @@ export class PaymentOrchestrator {
     const commissionAmount = payment.commissionUsdt;
     if (!commissionAmount) return;
 
-    const idempotencyKey = `${paymentId}:platform:${existing?.id ?? randomUUID()}`;
+    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:platform:${randomUUID()}`;
     try {
       const leg = await this.provider.settlePlatformCommission({
         platformWallet,
         network: platformNetwork,
         amountUsdt: commissionAmount.toString(),
       }, idempotencyKey);
+
+      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING;
 
       await this.prisma.$transaction(async (tx) => {
         await tx.transfer.upsert({
@@ -175,36 +256,75 @@ export class PaymentOrchestrator {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
             idempotencyKey,
-            status: leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING,
+            status: newStatus,
           },
           update: {
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
-            status: leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING,
+            status: newStatus,
           },
         });
 
-        if (leg.status === 'COMPLETED') {
-          const merchantLeg = await tx.transfer.findFirst({
-            where: { paymentId, kind: TransferKind.MERCHANT_PAYOUT, status: TransferStatus.COMPLETED },
-          });
-          if (merchantLeg) {
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { status: PaymentStatus.COMPLETED, completedAt: new Date() },
-            });
-          } else {
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { status: PaymentStatus.PLATFORM_PAYOUT_PENDING },
-            });
-          }
-        }
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: { platformTransferStatus: newStatus },
+        });
       });
+
+      if (newStatus === TransferStatus.COMPLETED) {
+        await this.syncPaymentGlobalStatus(paymentId);
+      }
     } catch (error) {
       await this.prisma.payment.update({
         where: { id: paymentId },
-        data: { status: PaymentStatus.FAILED, failureMessage: `Platform commission failed: ${(error as Error).message}` },
+        data: {
+          platformTransferStatus: TransferStatus.FAILED,
+          status: PaymentStatus.FAILED,
+          failureMessage: `Platform commission failed: ${(error as Error).message}`,
+        },
+      });
+    }
+  }
+
+  /**
+   * Syncs the global Payment.status based on independent leg statuses.
+   * COMPLETED only when BOTH legs are COMPLETED.
+   * FAILED if either leg is FAILED and the other is not still PROCESSING.
+   */
+  private async syncPaymentGlobalStatus(paymentId: string): Promise<void> {
+    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    const merchant = payment.merchantTransferStatus;
+    const platform = payment.platformTransferStatus;
+
+    if (merchant === TransferStatus.COMPLETED && platform === TransferStatus.COMPLETED) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: { status: PaymentStatus.COMPLETED, completedAt: new Date() },
+      });
+      return;
+    }
+
+    if (merchant === TransferStatus.FAILED || platform === TransferStatus.FAILED) {
+      // Only mark globally failed if the other leg is not still processing
+      const otherProcessing =
+        (merchant === TransferStatus.PROCESSING || platform === TransferStatus.PROCESSING);
+      if (!otherProcessing) {
+        await this.prisma.payment.update({
+          where: { id: paymentId },
+          data: {
+            status: PaymentStatus.FAILED,
+            failureMessage: payment.failureMessage ?? 'One or more settlement legs failed',
+          },
+        });
+      }
+      return;
+    }
+
+    // At least one leg completed, none failed → partial state
+    if (merchant === TransferStatus.COMPLETED || platform === TransferStatus.COMPLETED) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: { status: PaymentStatus.COMMISSION_TRANSFER_PENDING },
       });
     }
   }

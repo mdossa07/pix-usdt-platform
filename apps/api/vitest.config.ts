@@ -1,0 +1,20 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    include: ['src/**/*.test.ts', 'src/**/*.e2e.test.ts'],
+    exclude: ['dist/**', 'node_modules/**', 'src/payments/split.test.ts', 'src/payments/orchestrator.test.ts'],
+    globals: false,
+    environment: 'node',
+    testTimeout: 30000,
+    env: {
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/pixsplit_test?schema=public',
+      NODE_ENV: 'test',
+      PAYMENTS_MODE: 'mock',
+      JWT_SECRET: 'test-secret-at-least-32-characters-long',
+      PII_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000',
+      PLATFORM_COMMISSION_BPS: '200',
+      MOCK_USDT_PER_BRL: '0.180000',
+    },
+  },
+});

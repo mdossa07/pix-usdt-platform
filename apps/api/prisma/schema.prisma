@@ -175,6 +175,8 @@ model Payment {
   expiresAt             DateTime?
   paidAt                DateTime?
   completedAt           DateTime?
+  merchantTransferStatus TransferStatus?
+  platformTransferStatus TransferStatus?
   failureCode           String?
   failureMessage        String?
   createdAt             DateTime      @default(now())
