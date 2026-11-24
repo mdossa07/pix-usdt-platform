@@ -74,10 +74,8 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - TransFi v3 exige onboarding de sender/recipient, dados dinâmicos por país/tipo, confirmação do método PIX BRL habilitado para o MID e confirmação de que o modelo permite o cadastro do pagador final. Payin usa userId de sender; payout usa recipient/userId conforme a ordem.
 - Foxbit Partner depende de permissões comerciais específicas. Fiat Gateway no nível do parceiro e funding de sub-member são fluxos distintos; a arquitetura de saldo e os dois withdrawals precisam de aprovação escrita.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
-- Webhooks de saída para comerciantes implementados: endpoints HTTPS gerenciáveis, segredo HMAC cifrado, eventos `payment.created`, `payment.status_changed` e `payment.completed`, outbox transacional PostgreSQL, tentativas persistentes e auditoria de entregas.
-- O dispatcher rejeita redirecionamentos, limita timeout/resposta, revalida DNS por entrega e fixa endereços IP públicos para reduzir SSRF/DNS rebinding. A entrega é at-least-once; comerciantes devem deduplicar pelo ID do evento.
-- TOTP agora é obrigatório para superadministradores; ainda falta documentar um processo multi-pessoa de break-glass.
-- Faltam teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo, processo multi-pessoa de break-glass e revisão jurídica/regulatória/fiscal.
+- Ainda falta documentar um processo multi-pessoa de break-glass para recuperação administrativa.
+- Faltam teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
 
 ## Próximas etapas
