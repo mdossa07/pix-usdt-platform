@@ -216,15 +216,15 @@ export class TransFiAdapter implements PaymentProvider {
     };
   }
 
-  async getTransferStatus(providerTransferId: string, _idempotencyKey: string): Promise<TransferStatusResult | null> {
+  async getTransferStatus(providerTransferId: string | null, idempotencyKey: string): Promise<TransferStatusResult | null> {
     if (this.mode === 'mock') {
-      return { status: 'COMPLETED', providerReference: providerTransferId };
+      return { status: 'COMPLETED', providerReference: providerTransferId || idempotencyKey };
     }
 
     try {
       const response = await this.client.request<{ status: string; txHash?: string }>({
         method: 'GET',
-        path: `/v3/orders/${providerTransferId}`,
+        path: `/v3/orders/${encodeURIComponent(providerTransferId || idempotencyKey)}`,
       });
 
       return {
