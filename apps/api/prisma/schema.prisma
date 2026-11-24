@@ -84,6 +84,7 @@ model User {
   twoFactorSecretEncrypted        String?
   twoFactorPendingSecretEncrypted String?
   twoFactorEnabledAt              DateTime?
+  twoFactorLastUsedStep           BigInt?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   merchant     Merchant?
