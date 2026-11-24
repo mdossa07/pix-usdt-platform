@@ -12,6 +12,7 @@ export default function WorkspaceShell({ children, area }: { children: ReactNode
       // Clear local browser state even if the cookie has expired.
     } finally {
       localStorage.removeItem('pixsplit_authenticated');
+      localStorage.removeItem('pixsplit_token');
       localStorage.removeItem('pixsplit_pending_payment_create');
       sessionStorage.removeItem('pixsplit_csrf');
       window.location.assign('/login');
