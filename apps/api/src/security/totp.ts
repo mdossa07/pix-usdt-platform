@@ -73,7 +73,7 @@ export function matchTotpCounter(
   nowMs = Date.now(),
   window = 1,
 ): number | null {
-  if (!/^\\d{6}$/.test(suppliedCode)) return null;
+  if (!/^\d{6}$/.test(suppliedCode)) return null;
   if (!Number.isFinite(nowMs) || nowMs < 0 || !Number.isInteger(window) || window < 0 || window > 2) {
     return null;
   }
