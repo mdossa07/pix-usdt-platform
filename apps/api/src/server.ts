@@ -290,11 +290,15 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   const event = parseFoxbitWebhook(body);
   if (!event) return reply.code(400).send({ error: 'invalid_event_payload' });
   const state = mapWebhookStatusToPaymentState(event.webhook_type, event.data.to_state);
+  let duplicate = false;
   try {
     await prisma.webhookEvent.create({ data: { provider: 'FOXBIT', providerEventId: event.event_id, eventType: event.webhook_type, payloadEncrypted: encryptPii(raw.toString('utf8')), signatureValid: true } });
   } catch (error) {
-    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return reply.code(200).send({ received: true, duplicate: true });
-    throw error;
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
+      duplicate = true;
+      const prior = await prisma.webhookEvent.findFirst({ where: { provider: 'FOXBIT', providerEventId: event.event_id } });
+      if (prior?.processedAt) return reply.code(200).send({ received: true, duplicate: true, processed: true });
+    } else throw error;
   }
   let processed = false;
   const foxbitOpenPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
@@ -302,24 +306,33 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
         data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
       });
-      if (changed.count === 1) { await enqueueSettlement(payment.id, payment.amountBrlCents); processed = true; }
+      if (changed.count === 1) {
+        await enqueueSettlement(payment.id, payment.amountBrlCents);
+        processed = true;
+      }
+    } else if (payment?.status === PaymentStatus.PIX_CONFIRMED) {
+      // A previous attempt may have committed PIX_CONFIRMED but failed before enqueueing.
+      await enqueueSettlement(payment.id, payment.amountBrlCents);
+      processed = true;
+    } else if (payment && [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED].includes(payment.status)) {
+      processed = true;
     }
   } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
         data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
       });
       processed = changed.count === 1;
-    }
+    } else if (payment?.status === PaymentStatus.FAILED) processed = true;
   }
   await prisma.webhookEvent.updateMany({ where: { provider: 'FOXBIT', providerEventId: event.event_id }, data: { processedAt: processed ? new Date() : null } });
-  request.log.info({ eventId: event.event_id, eventType: event.webhook_type, state, processed }, 'Foxbit webhook recorded');
-  return reply.code(200).send({ received: true, processed });
+  request.log.info({ eventId: event.event_id, eventType: event.webhook_type, state, processed, duplicate }, 'Foxbit webhook recorded');
+  return reply.code(200).send({ received: true, processed, duplicate });
 });
 // --- TransFi Webhook Handler ---
 app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, reply) => {
@@ -340,6 +353,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
 
   // Record every authenticated event before applying state changes. Provider event IDs
   // are unique; duplicate deliveries are acknowledged without repeating side effects.
+  let duplicate = false;
   try {
     await prisma.webhookEvent.create({
       data: {
@@ -352,9 +366,10 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     });
   } catch (error) {
     if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') {
-      return reply.code(200).send({ received: true, duplicate: true });
-    }
-    throw error;
+      duplicate = true;
+      const prior = await prisma.webhookEvent.findFirst({ where: { provider: 'TRANSFI', providerEventId: payload.eventId } });
+      if (prior?.processedAt) return reply.code(200).send({ received: true, duplicate: true, processed: true });
+    } else throw error;
   }
 
   let processed = false;
@@ -363,19 +378,27 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
     if (payment && newState === 'PAID' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        where: { id: payment.id, status: { in: openPaymentStatuses } },
         data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
       });
       if (changed.count === 1) {
         await enqueueSettlement(payment.id, payment.amountBrlCents);
         processed = true;
       }
+    } else if (payment && newState === 'PAID' && payment.status === PaymentStatus.PIX_CONFIRMED) {
+      // Recover a confirmation committed before a queue publish failure.
+      await enqueueSettlement(payment.id, payment.amountBrlCents);
+      processed = true;
+    } else if (payment && newState === 'PAID' && [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED].includes(payment.status)) {
+      processed = true;
     } else if (payment && newState === 'FAILED' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING] } },
+        where: { id: payment.id, status: { in: openPaymentStatuses } },
         data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
       });
       processed = changed.count === 1;
+    } else if (payment && newState === 'FAILED' && payment.status === PaymentStatus.FAILED) {
+      processed = true;
     }
     // "asset_settled" means provider-side asset settlement, not both external
     // beneficiary transfers. Only the payout orchestrator may complete a payment.
@@ -385,8 +408,8 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     where: { provider: 'TRANSFI', providerEventId: payload.eventId },
     data: { processedAt: processed ? new Date() : null },
   });
-  request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed }, 'TransFi webhook recorded');
-  return reply.code(200).send({ received: true, processed });
+  request.log.info({ eventId: payload.eventId, eventType: payload.entityType, processed, duplicate }, 'TransFi webhook recorded');
+  return reply.code(200).send({ received: true, processed, duplicate });
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
