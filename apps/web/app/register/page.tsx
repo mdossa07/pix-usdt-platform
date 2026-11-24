@@ -15,6 +15,7 @@ export default function RegisterPage() {
     try {
       const result = await apiRequest<{ csrfToken: string; user: { role: string } }>('/v1/auth/register', { method:'POST', body: JSON.stringify(form) });
       sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+      localStorage.removeItem('pixsplit_token');
       localStorage.setItem('pixsplit_authenticated', '1');
       window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
     } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível criar a conta.'); }
