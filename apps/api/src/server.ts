@@ -150,11 +150,24 @@ app.post('/v1/wallets/:id/default', { preHandler: app.authenticate }, async (req
   const { id } = request.params as { id: string };
   const wallet = await prisma.walletDestination.findFirst({ where: { id, merchantId: merchant.id } });
   if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
-  await prisma.$transaction([
-    prisma.walletDestination.updateMany({ where: { merchantId: merchant.id }, data: { isDefault: false } }),
-    prisma.walletDestination.update({ where: { id }, data: { isDefault: true } }),
-  ]);
-  await audit(request, 'WALLET_SET_DEFAULT', 'WALLET', id);
+  if (wallet.status !== WalletStatus.VERIFIED || !wallet.isVerified) {
+    return reply.code(409).send({
+      error: 'wallet_not_verified',
+      message: 'Somente uma carteira verificada pode ser definida como padrão.',
+    });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.walletDestination.updateMany({
+      where: { merchantId: merchant.id, isDefault: true },
+      data: { isDefault: false },
+    });
+    await tx.walletDestination.update({
+      where: { id: wallet.id },
+      data: { isDefault: true },
+    });
+  });
+  await audit(request, 'WALLET_SET_DEFAULT', 'WALLET', id, { networkCode: wallet.networkCode });
   return { success: true };
 });
 
