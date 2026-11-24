@@ -26,3 +26,12 @@ test('TransFi PIX event map follows collection statuses', () => {
   assert.equal(mapTransFiStatusToPaymentState('fund_processing'), 'PENDING');
   assert.equal(mapTransFiStatusToPaymentState('manual_review'), 'PENDING');
 });
+test('TransFi v3 webhook status mapping covers intermediate and terminal failure events', () => {
+  for (const status of ['fund_deposited', 'asset_deposited', 'asset_processing', 'approval_pending', 'manual_review']) {
+    assert.equal(mapTransFiStatusToPaymentState(status), 'PENDING', status);
+  }
+  for (const status of ['fund_deposit_failed', 'asset_settle_failed', 'rejected', 'expired']) {
+    assert.equal(mapTransFiStatusToPaymentState(status), 'FAILED', status);
+  }
+  assert.equal(mapTransFiStatusToPaymentState('asset_settled'), 'COMPLETED');
+});
