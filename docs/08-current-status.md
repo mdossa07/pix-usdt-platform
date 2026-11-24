@@ -1,4 +1,4 @@
-# Status do projeto — 24/11/2026 (atualizado após PR #10)
+# Status do projeto — 24/11/2026 (atualizado após PR #11)
 
 ## Entregue e validado
 
@@ -57,13 +57,17 @@
 - PR #10: TOTP RFC 6238 para superadministradores, segredo cifrado AES-256-GCM, desafio de login de cinco minutos, consumo atômico de passos e limitação de tentativas.
 - PR #10: dez códigos de recuperação independentes de 128 bits, armazenamento apenas de hashes SHA-256, consumo único transacional e regeneração protegida por senha atual + TOTP.
 - Middleware de sessão revalida usuário ativo e papel atual no PostgreSQL em cada rota autenticada, revogando imediatamente sessões de contas desativadas ou com papel alterado.
+- PR #11: painel web deixou de receber/guardar JWT em `localStorage`; sessões de navegador usam cookie `HttpOnly`, `Path=/`, duração de 2 horas e `Secure`/`SameSite=None` em produção.
+- PR #11: mutações autenticadas por cookie exigem `Origin` igual ao `APP_URL` e `x-csrf-token` vinculado ao JWT assinado; novas abas recuperam o token sem rotacionar a sessão.
+- PR #11: logout limpa o cookie de sessão; autenticação por bearer JWT permanece disponível para compatibilidade e as integrações de comerciantes continuam usando HMAC.
 
 ## Verificações recentes
 
 - PR #8: serviço e testes PostgreSQL de idempotência aprovados.
 - PR #9: CI completo aprovado, incluindo concorrência de cobranças, migrations, financeiro, HMAC, webhooks e build: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45481197090
 - PR #10: CI completo aprovado, incluindo RFC 6238, teste concorrente de recuperação PostgreSQL, migrations, testes financeiros, idempotência, HMAC, webhooks e build: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45484553161
-- PR #8, #9 e #10 estão integrados ao branch principal.
+- PR #11: CI completo aprovado em `63ecdb7`; install, Prisma, lint, testes unitários, migrações limpas, integração financeira, idempotência concorrente, HMAC, webhooks, TOTP e build: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45491203507
+- PR #8, #9, #10 e #11 estão integrados ao branch principal; PR #11 entrou no commit `05ce453`.
 
 ## Bloqueios atuais para produção
 
@@ -75,8 +79,9 @@
 - Ainda não recebemos credenciais sandbox, MID/IDs de parceiro, permissões ou contratos operacionais para certificar um provedor de ponta a ponta.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido por cada corredor e provedor.
 - Webhooks de saída para sistemas dos comerciantes ainda não foram implementados.
-- JWT do painel ainda fica em localStorage; antes da produção, migrar para cookie HttpOnly/Secure/SameSite ou BFF com proteção CSRF.
+- Sessão do painel agora usa cookie HttpOnly e CSRF. Ainda falta implementar revogação centralizada por sessão/JTI; hoje o cookie é limpo no logout e o JWT expira em até 2 horas (usuários desativados ou com papel alterado são bloqueados por consulta ao banco).
 - O TOTP está implementado, mas todos os superadministradores precisam habilitá-lo antes da produção e a operação precisa documentar um processo multi-pessoa de break-glass caso todos os fatores de recuperação sejam perdidos.
+- O repositório GitHub continua público. Não colocar credenciais, chaves, certificados ou dados reais neste repositório; alterar a visibilidade para Private antes de iniciar homologação com credenciais.
 - Faltam teste visual/funcional de navegador, observabilidade/alertas operacionais, runbooks, pentest externo e revisão jurídica/regulatória/fiscal.
 
 ## Próximas etapas
@@ -87,5 +92,6 @@
 4. Construir checkout do pagador com captura segura de dados e onboarding dinâmico para os campos exigidos pelo provedor.
 5. Homologar payin, conversão, payouts independentes, webhooks e conciliação com credenciais reais de sandbox.
 6. Implementar webhooks de saída seguros para comerciantes e completar o fluxo KYC/KYB.
-7. Migrar autenticação do painel para cookie HttpOnly/BFF, executar testes E2E de navegador, pentest e revisão jurídica/regulatória/fiscal.
-8. Liberar produção somente depois de confirmar os dois payouts, ledger balanceado e reconciliação do saldo do provedor.
+7. Concluir revogação centralizada de sessões, testes E2E de navegador, pentest e revisão jurídica/regulatória/fiscal.
+8. Alterar a visibilidade do repositório para Private e configurar segredos apenas no gerenciador de segredos do ambiente de deploy.
+9. Liberar produção somente depois de confirmar os dois payouts, ledger balanceado e reconciliação do saldo do provedor.
