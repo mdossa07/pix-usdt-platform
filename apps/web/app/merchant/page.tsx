@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
 import { buildCsv } from '../../lib/csv';
@@ -143,6 +143,20 @@ function displayStatus(status: string): string {
   return statusLabels[status] ?? status.replaceAll('_', ' ').toLowerCase();
 }
 
+async function fingerprintPaymentIntent(payload: {
+  amountBrlCents: number;
+  walletId: string;
+  description?: string;
+}): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify({
+    amountBrlCents: payload.amountBrlCents,
+    walletId: payload.walletId,
+    description: payload.description?.trim() || null,
+  }));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+}
+
 function maskedAddress(address: string): string {
   if (!address) return '—';
   return address.length <= 12 ? address : address.slice(0, 6) + '…' + address.slice(-8);
@@ -170,6 +184,7 @@ export default function MerchantDashboard() {
   const [paymentDescription, setPaymentDescription] = useState('');
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [createdCheckout, setCreatedCheckout] = useState<string | null>(null);
+  const pendingPaymentIdempotency = useRef<{ fingerprint: string; key: string } | null>(null);
 
   const loadData = useCallback(async (authToken: string) => {
     setLoading(true);
@@ -287,23 +302,75 @@ export default function MerchantDashboard() {
     if (!token) return;
     const amount = Number(paymentAmount.replace(',', '.'));
     const wallet = wallets.find(item => item.id === paymentWalletId);
-    if (!Number.isFinite(amount) || amount < 5 || amount > 100000 || !wallet || wallet.status !== 'VERIFIED') {
+    if (!Number.isFinite(amount) || amount < 5 || amount > 100000 || !wallet || wallet.status !== 'VERIFIED' || !wallet.isVerified) {
       setNotice('Informe um valor entre R$ 5,00 e R$ 100.000,00 e selecione uma carteira verificada.');
       return;
     }
+
+    const payload = {
+      amountBrlCents: Math.round(amount * 100),
+      walletId: paymentWalletId,
+      description: paymentDescription.trim() || undefined,
+    };
+
     setPaymentSubmitting(true);
     setNotice(null);
     setCreatedCheckout(null);
+
     try {
-      const result = await apiRequest<{ externalId: string; mode: string; warning?: string }>(
+      const fingerprint = await fingerprintPaymentIntent(payload);
+      const storageKey = 'pixsplit_pending_payment_create';
+      let pending = pendingPaymentIdempotency.current;
+
+      if (!pending || pending.fingerprint !== fingerprint) {
+        try {
+          const stored = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as
+            | { fingerprint: string; key: string }
+            | null;
+          pending = stored?.fingerprint === fingerprint && typeof stored.key === 'string'
+            ? stored
+            : null;
+        } catch {
+          pending = null;
+        }
+      }
+
+      if (!pending) {
+        pending = { fingerprint, key: crypto.randomUUID() };
+      }
+
+      pendingPaymentIdempotency.current = pending;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(pending));
+      } catch {
+        // The in-memory ref still preserves the key while the page stays open.
+      }
+
+      const result = await apiRequest<{
+        id: string;
+        externalId: string;
+        mode: string;
+        warning?: string;
+      }>(
         '/v1/payments',
-        { method: 'POST', body: JSON.stringify({
-          amountBrlCents: Math.round(amount * 100),
-          walletId: paymentWalletId,
-          description: paymentDescription.trim() || undefined,
-        }) },
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': pending.key },
+          body: JSON.stringify(payload),
+        },
         token,
       );
+
+      pendingPaymentIdempotency.current = null;
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as
+          | { fingerprint: string; key: string }
+          | null;
+        if (stored?.key === pending.key) localStorage.removeItem(storageKey);
+      } catch {
+        // Ignore storage cleanup failures after a successful API response.
+      }
+
       setCreatedCheckout(result.externalId);
       setPaymentAmount('');
       setPaymentDescription('');

@@ -86,11 +86,31 @@ A tesouraria precisa de um endereço por rede; a perna de 2% deve usar a mesma r
 
 ### `POST /v1/payments`
 
+Cabeçalhos obrigatórios:
+
+```http
+Authorization: Bearer <JWT>
+Idempotency-Key: <UUID aleatório por intenção de cobrança>
+Content-Type: application/json
+```
+
+A chave deve ter entre 16 e 128 caracteres ASCII: letras, números, ponto, sublinhado, dois-pontos e hífen.
+
 ```json
 { "amountBrlCents": 100000, "walletId": "id-da-carteira", "description": "Pedido 123" }
 ```
 
 Cria uma cobrança MOCK com identificador `MOCK-PIX-NOT-PAYABLE-...`. Esse texto não é código PIX e não aceita pagamento.
+
+Idempotência:
+- Mesma chave e mesmo corpo: devolve a resposta original, com HTTP 201 e `Idempotency-Replayed: true`.
+- Mesma chave e corpo diferente: HTTP 409 `idempotency_key_reused_with_different_request`.
+- Requisição ainda sem resposta persistida: HTTP 409 `idempotency_request_in_progress` e `Retry-After: 1`.
+- Chave ausente ou inválida: HTTP 400 `valid_idempotency_key_required`.
+
+O escopo é por comerciante e endpoint. O backend grava a chave, hash do corpo, cobrança, resposta e auditoria na mesma transação PostgreSQL. O dashboard conserva a chave pendente e apenas um fingerprint SHA-256 do corpo no navegador; logout remove esse estado. Use uma chave nova para cada nova intenção. Consulte `docs/09-payment-idempotency.md` para o contrato completo.
+
+A cobrança permanece em `PIX_PENDING` e em modo mock. Nenhuma instituição financeira ou blockchain é acionada.
 
 ### `GET /v1/payments`
 
@@ -104,7 +124,7 @@ Somente modo local/mock. Simula o resultado em USDT usando a cotação fixa `MOC
 
 - `GET /v1/dashboard`: agregados e operações do merchant autenticado.
 - `GET /v1/admin/dashboard`: apenas `SUPER_ADMIN`; agregados globais da plataforma.
-- `GET /v1/provider/status`: informa se existe onboarding/credencial configurado e enumera aprovações pendentes.
+- `GET /v1/admin/provider-status`: apenas `SUPER_ADMIN`; informa provedor selecionado, presença de credenciais, estado de homologação e aprovações pendentes. Não existe endpoint público para esse estado.
 
 ## Webhook
 
@@ -112,7 +132,7 @@ Somente modo local/mock. Simula o resultado em USDT usando a cotação fixa `MOC
 
 ## Endpoints ainda não implementados
 
-- API keys e autenticação merchant-to-server por chave.
+- Webhooks de saída para os merchants, com gestão de endpoints, assinatura, tentativas e reentrega.
 - Webhooks de saída para os merchants.
 - KYC/KYB e revisão manual no painel.
 - Integração financeira Foxbit sandbox/live.

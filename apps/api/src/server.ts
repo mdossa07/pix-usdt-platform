@@ -18,6 +18,7 @@ import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
+import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/idempotent-payment.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
@@ -254,59 +255,57 @@ app.get('/v1/payments', { preHandler: app.authenticate }, async (request) => {
   return payments.map(p => ({ id: p.id, externalId: p.externalId, status: p.status, amountBrlCents: p.amountBrlCents.toString(), commissionUsdt: p.commissionUsdt?.toString() ?? null, merchantNetUsdt: p.merchantNetUsdt?.toString() ?? null, wallet: { label: p.walletDestination.label, exchangeName: p.walletDestination.exchangeName, networkCode: p.walletDestination.networkCode, addressLast8: p.walletDestination.addressLast8 }, createdAt: p.createdAt, expiresAt: p.expiresAt, transfers: p.transfers.map(t => ({ kind: t.kind, status: t.status, amountUsdt: t.amountUsdt.toString(), txHash: t.txHash })) }));
 });
 
-app.post('/v1/payments', { preHandler: app.authenticate }, async (request, reply) => {
-  if (!mockFinancialExecutionEnabled) return reply.code(503).send({ error: 'financial_operations_disabled' });
-  const schema = z.object({ amountBrlCents: z.number().int().min(500).max(10_000_000), walletId: z.string().min(1), description: z.string().max(120).optional() });
-  const parsed = schema.safeParse(request.body);
-  if (!parsed.success) return reply.code(400).send({ error: 'invalid_payment', details: parsed.error.flatten() });
-  const merchant = await merchantFor(request);
-  if (!merchant.isEnabled || merchant.kycStatus !== 'APPROVED') {
-    return reply.code(403).send({ error: 'merchant_not_approved', message: 'A conta precisa estar aprovada e habilitada antes de criar cobranças.' });
-  }
-  const wallet = await prisma.walletDestination.findFirst({ where: { id: parsed.data.walletId, merchantId: merchant.id } });
-  if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
-  if (wallet.status !== WalletStatus.VERIFIED) {
-    return reply.code(409).send({ error: 'wallet_not_verified', message: 'A carteira precisa ser verificada antes de criar cobranças.' });
-  }
-  const externalId = `ps_${randomUUID().replaceAll('-', '')}`;
-  const payment = await prisma.payment.create({ data: {
-    externalId, merchantId: merchant.id, walletDestinationId: wallet.id,
-    status: PaymentStatus.PIX_PENDING, description: parsed.data.description, amountBrlCents: BigInt(parsed.data.amountBrlCents), commissionBps: config.PLATFORM_COMMISSION_BPS,
-    pixCopyPaste: `MOCK-PIX-NOT-PAYABLE-${externalId}`, expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-  } });
-  await audit(request, 'PAYMENT_CREATED_MOCK', 'PAYMENT', payment.id, { amountBrlCents: parsed.data.amountBrlCents, walletId: wallet.id });
-  return reply.code(201).send({ id: payment.id, externalId, status: payment.status, amountBrlCents: payment.amountBrlCents.toString(), pixCopyPaste: payment.pixCopyPaste, expiresAt: payment.expiresAt, mode: 'mock', warning: 'Este código é fictício e não aceita pagamento. Integração PIX real aguarda homologação Foxbit.' });
-});
-
-// --- Public Checkout Endpoint (no auth, read-only) ---
-app.get('/v1/checkout/:externalId', async (request, reply) => {
+app.post('/v1/payments', { preHandler: [app.authenticate] }, async (request, reply) => {
   if (!mockFinancialExecutionEnabled) {
-    return reply.code(503).send({ error: 'checkout_disabled', message: 'Checkout indisponível até a homologação do fluxo de pagamento.' });
+    return reply.code(503).send({ error: 'financial_operations_disabled' });
   }
-  const { externalId } = request.params as { externalId: string };
-  const payment = await prisma.payment.findFirst({
-    where: { externalId },
-    include: { walletDestination: true, merchant: { select: { legalName: true } } },
-  });
-  if (!payment) return reply.code(404).send({ error: 'payment_not_found' });
-  const now = Date.now();
-  const expired = payment.expiresAt && new Date(payment.expiresAt).getTime() < now;
-  return {
-    id: payment.id,
-    externalId: payment.externalId,
-    status: payment.status,
-    amountBrlCents: payment.amountBrlCents.toString(),
-    pixCopyPaste: payment.pixCopyPaste,
-    expiresAt: payment.expiresAt,
-    expired: !!expired,
-    description: payment.description ?? null,
-    merchant: { name: payment.merchant.legalName },
-    wallet: { networkCode: payment.walletDestination.networkCode, addressLast8: payment.walletDestination.addressLast8 },
-    mode: config.PAYMENTS_MODE,
-  };
-});
 
-/** Local-only simulation. It never contacts the provider or blockchain. */
+  const parsed = z.object({
+    amountBrlCents: z.number().int().min(500).max(10_000_000),
+    walletId: z.string().min(1),
+    description: z.string().max(120).optional(),
+  }).strict().safeParse(request.body);
+
+  if (!parsed.success) {
+    return reply.code(400).send({ error: 'invalid_payment', details: parsed.error.flatten() });
+  }
+
+  const idempotencyKey = request.headers['idempotency-key'];
+  if (!isValidIdempotencyKey(idempotencyKey)) {
+    return reply.code(400).send({ error: 'valid_idempotency_key_required' });
+  }
+
+  const merchant = await merchantFor(request);
+  const result = await createPaymentIdempotently(prisma, {
+    merchantId: merchant.id,
+    actorUserId: userId(request),
+    walletDestinationId: parsed.data.walletId,
+    amountBrlCents: parsed.data.amountBrlCents,
+    commissionBps: config.PLATFORM_COMMISSION_BPS,
+    description: parsed.data.description,
+    idempotencyKey,
+    ipAddress: request.ip,
+  });
+
+  switch (result.kind) {
+    case 'idempotency_conflict':
+      return reply.code(409).send({ error: result.error });
+    case 'idempotency_in_progress':
+      reply.header('Retry-After', '1');
+      return reply.code(409).send({ error: result.error });
+    case 'merchant_not_approved':
+      return reply.code(403).send({ error: result.error });
+    case 'wallet_not_found':
+      return reply.code(404).send({ error: result.error });
+    case 'wallet_not_verified':
+      return reply.code(409).send({ error: result.error });
+    case 'replayed':
+      reply.header('Idempotency-Replayed', 'true');
+      return reply.code(201).send(result.response);
+    case 'created':
+      return reply.code(201).send(result.response);
+  }
+});
 app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async (request, reply) => {
   if (!mockFinancialExecutionEnabled) return reply.code(403).send({ error: 'mock_only' });
   const merchant = await merchantFor(request);

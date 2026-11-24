@@ -9,12 +9,13 @@ let userId = '';
 let merchantId = '';
 let walletId = '';
 
-async function createInput(idempotencyKey: string, amountBrlCents = 5_000) {
+async function createInput(idempotencyKey: string, amountBrlCents = 5_000, commissionBps = 200) {
   return {
     merchantId,
     actorUserId: userId,
     walletDestinationId: walletId,
     amountBrlCents,
+    commissionBps,
     description: 'Integration test payment',
     idempotencyKey,
     ipAddress: '127.0.0.1',
@@ -85,7 +86,7 @@ describe('idempotent payment creation', () => {
 
   it('serializes concurrent same-key requests and creates exactly one payment', async () => {
     const key = `payment-${suffix}-concurrent`;
-    const input = await createInput(key);
+    const input = await createInput(key, 5_000, 225);
     const results = await Promise.all([
       createPaymentIdempotently(prisma, input),
       createPaymentIdempotently(prisma, input),
@@ -97,9 +98,19 @@ describe('idempotent payment creation', () => {
       return result.response;
     });
     expect(new Set(responses.map(response => response.id)).size).toBe(1);
+    expect(responses[0]).toEqual(responses[1]);
+    const firstResponse = responses.at(0);
+    if (!firstResponse) throw new Error('expected a stored payment response');
+    expect(firstResponse.status).toBe('PIX_PENDING');
+    const savedPayment = await prisma.payment.findUniqueOrThrow({ where: { id: firstResponse.id } });
+    expect(savedPayment.status).toBe('PIX_PENDING');
+    expect(savedPayment.commissionBps).toBe(225);
     expect(await prisma.payment.count({ where: { merchantId } })).toBe(1);
     expect(await prisma.idempotencyRecord.count({
       where: { scope: `merchant:POST:/v1/payments:${merchantId}`, key },
+    })).toBe(1);
+    expect(await prisma.auditEvent.count({
+      where: { entityId: firstResponse.id, action: 'PAYMENT_CREATED' },
     })).toBe(1);
   }, 20_000);
 

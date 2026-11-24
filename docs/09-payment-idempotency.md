@@ -25,7 +25,7 @@ A chave deve ter entre 16 e 128 caracteres ASCII e aceitar apenas letras, númer
 
 O cliente deve gerar uma chave por intenção de cobrança, mantê-la durante tentativas de repetição após timeout/erro de rede e descartá-la somente depois de receber uma resposta confirmada. Uma nova cobrança, mesmo com os mesmos valores, deve usar outra chave.
 
-O dashboard do comerciante guarda a chave pendente em memória e em `sessionStorage` para permitir retry na mesma aba após uma atualização.
+O endpoint `POST /v1/payments` aplica esse contrato no backend. O dashboard do comerciante guarda a chave pendente e apenas um fingerprint SHA-256 do pedido em `localStorage`, permitindo retry após recarregar a página ou reabrir o navegador. O logout remove esse estado pendente.
 
 ## Retenção
 

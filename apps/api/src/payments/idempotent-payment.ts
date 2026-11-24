@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { PaymentStatus, Prisma, PrismaClient } from '@prisma/client';
 
 const IDEMPOTENCY_SCOPE_PREFIX = 'merchant:POST:/v1/payments';
 
@@ -8,6 +8,7 @@ export interface CreatePaymentIdempotentlyInput {
   actorUserId: string;
   walletDestinationId: string;
   amountBrlCents: number;
+  commissionBps: number;
   description?: string;
   idempotencyKey: string;
   ipAddress: string;
@@ -120,8 +121,9 @@ export async function createPaymentIdempotently(
           merchantId: input.merchantId,
           walletDestinationId: input.walletDestinationId,
           amountBrlCents: BigInt(input.amountBrlCents),
+          status: PaymentStatus.PIX_PENDING,
           description: input.description,
-          commissionBps: 200,
+          commissionBps: input.commissionBps,
           pixCopyPaste: `MOCK-PIX-NOT-PAYABLE:${externalId}`,
           expiresAt,
         },
