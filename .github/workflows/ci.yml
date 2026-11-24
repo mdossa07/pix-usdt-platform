@@ -40,5 +40,5 @@ jobs:
       - name: Prepare integration database
         run: pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run financial integration scenarios
-        run: pnpm --filter @pixsplit/api exec vitest run src/payments/orchestrator.e2e.test.ts
+        run: pnpm --filter @pixsplit/api exec vitest run src/payments/orchestrator.e2e.test.ts src/security/hmac-auth.test.ts
       - run: pnpm build
