@@ -233,9 +233,10 @@ export class PaymentOrchestrator {
     // Persist and atomically claim the transfer BEFORE calling the provider.
     // Only one worker can move this attempt from CREATED to SUBMITTED.
     const claimed = await this.prisma.$transaction(async (tx) => {
-      const attempt = await tx.transfer.upsert({
-        where: { idempotencyKey },
-        create: {
+      // createMany(skipDuplicates) maps to INSERT .. ON CONFLICT DO NOTHING,
+      // avoiding Prisma upsert's concurrent-create P2002 race between workers.
+      await tx.transfer.createMany({
+        data: [{
           id: randomUUID(),
           paymentId,
           kind: TransferKind.MERCHANT_PAYOUT,
@@ -244,9 +245,11 @@ export class PaymentOrchestrator {
           destinationAddressEnc: wallet.addressEncrypted,
           idempotencyKey,
           status: TransferStatus.CREATED,
-        },
-        update: {},
+        }],
+        skipDuplicates: true,
       });
+      const attempt = await tx.transfer.findUnique({ where: { idempotencyKey } });
+      if (!attempt) throw new Error('merchant_transfer_attempt_not_persisted');
       const claim = await tx.transfer.updateMany({
         where: { id: attempt.id, status: TransferStatus.CREATED },
         data: { status: TransferStatus.SUBMITTED },
@@ -425,9 +428,8 @@ export class PaymentOrchestrator {
         ?? transferAttemptIdempotencyKey(paymentId, TransferKind.PLATFORM_COMMISSION, 1);
 
     const claimed = await this.prisma.$transaction(async (tx) => {
-      const attempt = await tx.transfer.upsert({
-        where: { idempotencyKey },
-        create: {
+      await tx.transfer.createMany({
+        data: [{
           id: randomUUID(),
           paymentId,
           kind: TransferKind.PLATFORM_COMMISSION,
@@ -436,9 +438,11 @@ export class PaymentOrchestrator {
           destinationAddressEnc: platformWalletRecord.addressEncrypted,
           idempotencyKey,
           status: TransferStatus.CREATED,
-        },
-        update: {},
+        }],
+        skipDuplicates: true,
       });
+      const attempt = await tx.transfer.findUnique({ where: { idempotencyKey } });
+      if (!attempt) throw new Error('platform_transfer_attempt_not_persisted');
       const claim = await tx.transfer.updateMany({
         where: { id: attempt.id, status: TransferStatus.CREATED },
         data: { status: TransferStatus.SUBMITTED },
@@ -521,6 +525,23 @@ export class PaymentOrchestrator {
           status: PaymentStatus.UNDER_REVIEW,
           failureCode: 'PAYOUT_LEG_REQUIRES_REVIEW',
           failureMessage: payment.failureMessage ?? 'At least one payout leg has a confirmed terminal failure and requires reconciliation.',
+        },
+      });
+      return;
+    }
+
+    // SUBMITTED is a durable local claim with no confirmed provider outcome.
+    // It is not a normal pending transfer and must be visibly held for reconciliation.
+    if (
+      merchant === TransferStatus.SUBMITTED || merchant === TransferStatus.CREATED
+      || platform === TransferStatus.SUBMITTED || platform === TransferStatus.CREATED
+    ) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'PAYOUT_OUTCOME_UNKNOWN',
+          failureMessage: payment.failureMessage ?? 'A payout was submitted but its provider outcome is not yet confirmed.',
         },
       });
       return;
