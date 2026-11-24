@@ -83,7 +83,15 @@ describe('transactional merchant webhook outbox', () => {
         },
       }),
     ]);
-    [createdEndpointId, completedEndpointId, disabledEndpointId] = endpoints.map(endpoint => endpoint.id);
+    const createdEndpoint = endpoints[0];
+    const completedEndpoint = endpoints[1];
+    const disabledEndpoint = endpoints[2];
+    if (!createdEndpoint || !completedEndpoint || !disabledEndpoint) {
+      throw new Error('webhook_test_endpoints_missing');
+    }
+    createdEndpointId = createdEndpoint.id;
+    completedEndpointId = completedEndpoint.id;
+    disabledEndpointId = disabledEndpoint.id;
 
     const payment = await prisma.payment.create({
       data: {
@@ -121,17 +129,19 @@ describe('transactional merchant webhook outbox', () => {
       where: { endpointId: { in: [createdEndpointId, completedEndpointId, disabledEndpointId] } },
     });
     expect(deliveries).toHaveLength(1);
-    expect(deliveries[0].endpointId).toBe(createdEndpointId);
-    expect(deliveries[0].eventName).toBe('payment.created');
-    expect(deliveries[0].status).toBe('PENDING');
-    expect(deliveries[0].attempts).toBe(0);
+    const delivery = deliveries[0];
+    if (!delivery) throw new Error('expected_one_webhook_delivery');
+    expect(delivery.endpointId).toBe(createdEndpointId);
+    expect(delivery.eventName).toBe('payment.created');
+    expect(delivery.status).toBe('PENDING');
+    expect(delivery.attempts).toBe(0);
 
-    const payload = deliveries[0].payload as {
+    const payload = delivery.payload as {
       id?: string;
       type?: string;
       data?: Record<string, unknown>;
     };
-    expect(payload.id).toBe(deliveries[0].eventId);
+    expect(payload.id).toBe(delivery.eventId);
     expect(payload.type).toBe('payment.created');
     expect(payload.data?.paymentId).toBe(paymentId);
     expect(payload.data?.amountBrlCents).toBe('12345');
@@ -165,7 +175,9 @@ describe('transactional merchant webhook outbox', () => {
     });
     expect(rows.filter(row => row.eventName === 'payment.status_changed')).toHaveLength(2);
     expect(rows.filter(row => row.eventName === 'payment.completed')).toHaveLength(1);
-    expect(rows.find(row => row.eventName === 'payment.completed')?.endpointId).toBe(completedEndpointId);
+    const completedDelivery = rows.find(row => row.eventName === 'payment.completed');
+    if (!completedDelivery) throw new Error('expected_payment_completed_delivery');
+    expect(completedDelivery.endpointId).toBe(completedEndpointId);
   }, 20_000);
 
   it('rolls outbox rows back when the payment transaction is rolled back', async () => {
