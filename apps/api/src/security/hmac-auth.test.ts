@@ -86,6 +86,17 @@ describe('HMAC Authentication', () => {
     expect(replay.json().error).toBe('request_replayed');
   });
 
+  it('allows only one winner when the same signed nonce arrives concurrently', async () => {
+    const timestamp = Date.now(), body = JSON.stringify({ amount: 100 }), nonce = createRequestNonce();
+    const sig = signature(timestamp, body, nonce);
+    const responses = await Promise.all([
+      sendSignedRequest(sig, timestamp, body, nonce),
+      sendSignedRequest(sig, timestamp, body, nonce),
+    ]);
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+    expect(responses.filter((response) => response.json().error === 'request_replayed')).toHaveLength(1);
+  });
+
   it('stores only a hash verifier and an encrypted signing secret', async () => {
     const record = await prisma.merchantApiKey.findUniqueOrThrow({ where: { id: keyId } });
     expect(record.keyHash).not.toBe(secret);
