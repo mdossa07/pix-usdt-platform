@@ -42,7 +42,7 @@ const sessionCookieOptions = {
   maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
 };
 
-function issueBrowserSession(reply: FastifyReply, user: { id: string; role: string }): string {
+function issueBrowserSession(reply: FastifyReply, user: { id: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT' }): string {
   const csrfToken = randomBytes(32).toString('hex');
   const token = app.jwt.sign({ sub: user.id, role: user.role, csrfToken });
   reply.header('Set-Cookie', buildSessionCookieHeader(token, sessionCookieOptions));
