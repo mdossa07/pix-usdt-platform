@@ -5,7 +5,8 @@ import rawBody from 'fastify-raw-body';
 import { PrismaClient } from '@prisma/client';
 import { createHmacAuthMiddleware, generateMerchantApiKey, signRequest } from './hmac-auth.js';
 
-const prisma = new PrismaClient();
+const adminPrisma = new PrismaClient();
+let prisma: PrismaClient;
 
 describe('HMAC Authentication', () => {
   let app: FastifyInstance;
@@ -15,6 +16,13 @@ describe('HMAC Authentication', () => {
   let secret: string;
 
   beforeAll(async () => {
+    // This suite uses its own Postgres schema so the financial E2E suite's
+    // destructive fixture cleanup cannot delete HMAC users/keys mid-test.
+    await adminPrisma.$executeRawUnsafe('CREATE SCHEMA IF NOT EXISTS "hmac_test"');
+    const databaseUrl = new URL(process.env.DATABASE_URL!);
+    databaseUrl.searchParams.set('schema', 'hmac_test');
+    prisma = new PrismaClient({ datasources: { db: { url: databaseUrl.toString() } } });
+
     const user = await prisma.user.create({
       data: {
         email: `hmac-test-${Date.now()}@pixsplit.dev`,
@@ -51,9 +59,10 @@ describe('HMAC Authentication', () => {
   afterAll(async () => {
     await app.close();
     await prisma.merchantApiKey.deleteMany({ where: { merchantId } });
-    await prisma.merchant.delete({ where: { id: merchantId } });
-    await prisma.user.delete({ where: { id: userId } });
+    await prisma.merchant.deleteMany({ where: { id: merchantId } });
+    await prisma.user.deleteMany({ where: { id: userId } });
     await prisma.$disconnect();
+    await adminPrisma.$disconnect();
   });
 
   async function sendSignedRequest(signature: string, timestamp = Date.now(), body = JSON.stringify({ amount: 100 })) {
