@@ -196,13 +196,18 @@ export async function sendSignedWebhook(input: {
         'X-PixSplit-Timestamp': timestamp,
         'X-PixSplit-Signature': 'sha256=' + signature,
       },
-      lookup: ((_hostname, options, callback) => {
-        if (options && typeof options === 'object' && 'all' in options && options.all) {
-          callback(null, addresses);
-        } else {
-          callback(null, chosen.address, chosen.family);
-        }
-      }) as NonNullable<RequestOptions['lookup']>,
+      lookup: ((
+        _hostname: string,
+        options: { all?: boolean } | number,
+        callback: (
+          error: NodeJS.ErrnoException | null,
+          address: string | Array<{ address: string; family: number }>,
+          family?: number,
+        ) => void,
+      ) => {
+        if (typeof options === 'object' && options.all) callback(null, addresses);
+        else callback(null, chosen.address, chosen.family);
+      }) as unknown as NonNullable<RequestOptions['lookup']>,
     };
 
     const request = httpsRequest(requestOptions, response => {
