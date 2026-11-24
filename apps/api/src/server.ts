@@ -301,6 +301,7 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     } else throw error;
   }
   let processed = false;
+  const postPaymentStatuses: PaymentStatus[] = [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED];
   const foxbitOpenPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
   if (event.data.type !== 'withdrawal' && event.data.purchase_id && state === 'PIX_CONFIRMED') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
@@ -317,7 +318,7 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
       // A previous attempt may have committed PIX_CONFIRMED but failed before enqueueing.
       await enqueueSettlement(payment.id, payment.amountBrlCents);
       processed = true;
-    } else if (payment && [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED].includes(payment.status)) {
+    } else if (payment && postPaymentStatuses.includes(payment.status)) {
       processed = true;
     }
   } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
@@ -373,6 +374,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   }
 
   let processed = false;
+  const postPaymentStatuses: PaymentStatus[] = [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED];
   const openPaymentStatuses: PaymentStatus[] = [PaymentStatus.CREATED, PaymentStatus.PIX_PENDING];
   if (payload.entityId && newState && payload.entityType === 'order' && payload.orderType === 'payin') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
@@ -389,7 +391,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
       // Recover a confirmation committed before a queue publish failure.
       await enqueueSettlement(payment.id, payment.amountBrlCents);
       processed = true;
-    } else if (payment && newState === 'PAID' && [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED, PaymentStatus.MERCHANT_PAYOUT_PENDING, PaymentStatus.PLATFORM_PAYOUT_PENDING, PaymentStatus.COMPLETED].includes(payment.status)) {
+    } else if (payment && newState === 'PAID' && postPaymentStatuses.includes(payment.status)) {
       processed = true;
     } else if (payment && newState === 'FAILED' && openPaymentStatuses.includes(payment.status)) {
       const changed = await prisma.payment.updateMany({
