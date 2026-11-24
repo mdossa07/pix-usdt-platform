@@ -435,11 +435,81 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
   return { success: true, message: 'Settlement re-enqueued' };
 });
 
-// --- Protected Merchant Endpoint Example (HMAC Auth) ---
+// --- Protected Merchant Endpoint: Create Payment (HMAC Auth) ---
+const createPaymentSchema = z.object({
+  amountBrlCents: z.number().int().positive(),
+  walletDestinationId: z.string().min(1),
+  externalId: z.string().min(1).max(128).optional(),
+  payerName: z.string().min(1).max(200).optional(),
+  payerTaxId: z.string().min(1).max(64).optional(),
+  description: z.string().max(500).optional(),
+});
+
 app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
-  // Placeholder: criação real de pagamento via API pública do merchant
-  // A autenticação HMAC já validou a identidade do merchant em request.merchant
-  return reply.code(501).send({ error: 'not_implemented', message: 'Use /v1/checkout/create for now. HMAC auth validated successfully.' });
+  const merchant = (request as any).merchant as { id: string; userId: string };
+  const parsed = createPaymentSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+  }
+  const { amountBrlCents, walletDestinationId, externalId, payerName, payerTaxId, description } = parsed.data;
+
+  // Validate wallet belongs to merchant
+  const wallet = await prisma.walletDestination.findFirst({ where: { id: walletDestinationId, merchantId: merchant.id } });
+  if (!wallet) {
+    return reply.code(400).send({ error: 'invalid_wallet', message: 'Wallet not found or does not belong to merchant' });
+  }
+
+  const paymentExternalId = externalId || randomUUID();
+  const existing = await prisma.payment.findFirst({ where: { merchantId: merchant.id, externalId: paymentExternalId } });
+  if (existing) {
+    return reply.code(200).send({
+      paymentId: existing.id,
+      externalId: existing.externalId,
+      status: existing.status,
+      pixQrCodeBase64: existing.pixQrCodeBase64,
+      pixCopyPaste: existing.pixCopyPaste,
+    });
+  }
+
+  // Mock FX rate: 1 USD = 5.50 BRL (rateUnits = 5500000 for 6-decimal precision)
+  const usdtAmount = mockBrlToUsdt(BigInt(amountBrlCents), '5.500000');
+  const split = calculateUsdtSplit(usdtAmount, 200); // 2% commission (200 bps)
+
+  const payment = await prisma.payment.create({
+    data: {
+      merchantId: merchant.id,
+      walletDestinationId,
+      externalId: paymentExternalId,
+      amountBrlCents: BigInt(amountBrlCents),
+      providerGrossUsdt: new Prisma.Decimal(split.totalUsdt),
+      commissionUsdt: new Prisma.Decimal(split.commissionUsdt),
+      merchantNetUsdt: new Prisma.Decimal(split.merchantUsdt),
+      commissionBps: 200,
+      status: PaymentStatus.CREATED,
+      pixQrCodeBase64: `data:image/png;base64,MOCK_QR_${paymentExternalId}`,
+      pixCopyPaste: `00020126580014BR.GOV.BCB.PIX0136${paymentExternalId}520400005303986540${(amountBrlCents / 100).toFixed(2)}5802BR`,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+      payerName: payerName || null,
+      payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
+      payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
+      description: description || null,
+    },
+  });
+
+  await enqueueSettlement(payment.id, BigInt(amountBrlCents));
+
+  return reply.code(201).send({
+    paymentId: payment.id,
+    externalId: payment.externalId,
+    amountBrlCents: Number(payment.amountBrlCents),
+    usdtAmount: payment.providerGrossUsdt?.toString() ?? '0',
+    merchantNetUsdt: payment.merchantNetUsdt?.toString() ?? '0',
+    commissionUsdt: payment.commissionUsdt?.toString() ?? '0',
+    status: payment.status,
+    pixQrCodeBase64: payment.pixQrCodeBase64,
+    pixCopyPaste: payment.pixCopyPaste,
+    expiresAt: payment.expiresAt?.toISOString(),
+  });
 });
 
 app.setErrorHandler((error, request, reply) => {
