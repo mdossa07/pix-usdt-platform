@@ -67,7 +67,7 @@ class MockProvider implements PaymentProvider {
   }
 
   async getTransferStatus(providerWithdrawalSn: string | null, idempotencyKey: string): Promise<TransferStatusResult | null> {
-    this.callLog.push({ method: 'getTransferStatus', args: [providerWithdrawalSn, _idempotencyKey] });
+    this.callLog.push({ method: 'getTransferStatus', args: [providerWithdrawalSn, idempotencyKey] });
     if ((providerWithdrawalSn?.includes('merchant') || idempotencyKey.includes(':merchant:')) && this.merchantCompletedRemotely) {
       return { status: 'COMPLETED', txHash: '0xrecovered_merchant_hash', providerReference: providerWithdrawalSn ?? 'merchant-recovered-by-partner-id' };
     }
