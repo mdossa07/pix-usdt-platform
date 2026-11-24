@@ -50,11 +50,18 @@ export function mapTransFiStatusToPaymentState(status: string | undefined): Paym
   switch (status.toLowerCase()) {
     case 'fund_settled': return 'PAID';
     case 'fund_failed':
+    case 'fund_deposit_failed':
+    case 'asset_settle_failed':
+    case 'rejected':
     case 'failed':
     case 'cancelled':
     case 'expired': return 'FAILED';
     case 'initiated':
     case 'fund_processing':
+    case 'fund_deposited':
+    case 'asset_deposited':
+    case 'asset_processing':
+    case 'approval_pending':
     case 'manual_review':
     case 'pending':
     case 'processing':
