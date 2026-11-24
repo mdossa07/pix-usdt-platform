@@ -217,7 +217,7 @@ export class PaymentOrchestrator {
         await tx.transfer.upsert({
           where: { idempotencyKey },
           create: {
-            id: existing?.id ?? randomUUID(),
+            id: randomUUID(),
             paymentId,
             kind: TransferKind.MERCHANT_PAYOUT,
             amountUsdt: payment.merchantNetUsdt!,
@@ -348,7 +348,7 @@ export class PaymentOrchestrator {
         await tx.transfer.upsert({
           where: { idempotencyKey },
           create: {
-            id: existing?.id ?? randomUUID(),
+            id: randomUUID(),
             paymentId,
             kind: TransferKind.PLATFORM_COMMISSION,
             amountUsdt: commissionAmount,
