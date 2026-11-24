@@ -42,6 +42,8 @@ describe('admin TOTP recovery code consumption', () => {
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(results.filter(value => !value)).toHaveLength(1);
     expect(await consumeRecoveryCode(prisma, userId, rawCode)).toBe(false);
+    const updatedUser = await prisma.user.findUnique({ where: { id: userId }, select: { lastLoginAt: true } });
+    expect(updatedUser?.lastLoginAt).not.toBeNull();
   }, 20_000);
 
   it('does not consume an unknown code', async () => {
