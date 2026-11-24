@@ -51,6 +51,17 @@ interface ProviderStatus {
   pendingApprovals: string[];
 }
 
+interface AdminTwoFactorStatus {
+  enabled: boolean;
+  enabledAt: string | null;
+  setupPending: boolean;
+}
+
+interface AdminTwoFactorSetup {
+  secret: string;
+  provisioningUri: string;
+}
+
 interface WalletReviewRecord {
   id: string;
   label: string;
@@ -82,6 +93,11 @@ export default function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [wallets, setWallets] = useState<WalletReviewRecord[]>([]);
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
+  const [twoFactorStatus, setTwoFactorStatus] = useState<AdminTwoFactorStatus | null>(null);
+  const [twoFactorSetup, setTwoFactorSetup] = useState<AdminTwoFactorSetup | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorBusy, setTwoFactorBusy] = useState(false);
+  const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -99,13 +115,15 @@ export default function AdminDashboard() {
       apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
       apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
       apiRequest<ProviderStatus>('/v1/admin/provider-status', {}, token),
+      apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token),
     ])
-      .then(([p, m, a, w, provider]) => {
+      .then(([p, m, a, w, provider, twoFactor]) => {
         setPayments(p);
         setMerchants(m);
         setAuditLogs(a);
         setWallets(w);
         setProviderStatus(provider);
+        setTwoFactorStatus(twoFactor);
       })
       .catch((err) => {
         if (err instanceof Error && err.message === 'unauthorized') {
@@ -213,6 +231,43 @@ export default function AdminDashboard() {
     URL.revokeObjectURL(url);
   };
 
+  const beginTwoFactorSetup = async () => {
+    if (!token) return;
+    setTwoFactorBusy(true);
+    setTwoFactorNotice(null);
+    try {
+      const result = await apiRequest<AdminTwoFactorSetup>('/v1/admin/2fa/setup', { method: 'POST' }, token);
+      setTwoFactorSetup(result);
+      setTwoFactorCode('');
+      setTwoFactorNotice('Adicione esta chave ao aplicativo autenticador e confirme com o código de seis dígitos.');
+    } catch (err) {
+      setTwoFactorNotice(err instanceof Error ? err.message : 'Não foi possível iniciar a configuração.');
+    } finally {
+      setTwoFactorBusy(false);
+    }
+  };
+
+  const enableTwoFactor = async () => {
+    if (!token || twoFactorCode.length !== 6) return;
+    setTwoFactorBusy(true);
+    setTwoFactorNotice(null);
+    try {
+      await apiRequest('/v1/admin/2fa/enable', {
+        method: 'POST',
+        body: JSON.stringify({ code: twoFactorCode }),
+      }, token);
+      const status = await apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token);
+      setTwoFactorStatus(status);
+      setTwoFactorSetup(null);
+      setTwoFactorCode('');
+      setTwoFactorNotice('Autenticação de dois fatores ativada. No próximo acesso será solicitado o código do aplicativo.');
+    } catch (err) {
+      setTwoFactorNotice(err instanceof Error ? err.message : 'Não foi possível ativar o segundo fator.');
+    } finally {
+      setTwoFactorBusy(false);
+    }
+  };
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'merchants', label: 'Comerciantes' },
@@ -250,6 +305,52 @@ export default function AdminDashboard() {
 
       {tab === 'overview' && (
         <div className="space-y-6">
+          {twoFactorStatus && (
+            <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4" aria-label="Autenticação de dois fatores do administrador">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Segurança da conta administrativa</p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-900">Autenticação de dois fatores (TOTP)</h3>
+                  <p className="mt-1 text-sm text-slate-600">Use um aplicativo autenticador para proteger o acesso de superadministrador.</p>
+                </div>
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${twoFactorStatus.enabled ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                  {twoFactorStatus.enabled ? 'Ativada' : 'Não ativada'}
+                </span>
+              </div>
+              {twoFactorStatus.enabled ? (
+                <p className="text-sm text-slate-600">Segundo fator ativo desde {twoFactorStatus.enabledAt ? new Date(twoFactorStatus.enabledAt).toLocaleString('pt-BR') : 'a confirmação'}. O próximo login administrativo exigirá senha e código temporário.</p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-600">A configuração é feita com um segredo exclusivo, cifrado no banco. O código de confirmação é necessário para ativar o segundo fator.</p>
+                  {!twoFactorSetup ? (
+                    <button type="button" onClick={beginTwoFactorSetup} disabled={twoFactorBusy} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
+                      {twoFactorBusy ? 'Preparando...' : (twoFactorStatus.setupPending ? 'Gerar nova chave de configuração' : 'Configurar autenticador')}
+                    </button>
+                  ) : (
+                    <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Chave secreta para cadastro manual</p>
+                        <p className="mt-1 break-all rounded bg-white p-3 font-mono text-sm text-slate-900">{twoFactorSetup.secret}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">URI do aplicativo autenticador</p>
+                        <textarea readOnly rows={3} value={twoFactorSetup.provisioningUri} className="mt-1 w-full rounded border border-slate-200 bg-white p-2 text-xs text-slate-700"/>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="flex-1 text-sm font-medium text-slate-700">Código de seis dígitos
+                          <input value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" maxLength={6} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono tracking-widest" placeholder="000000"/>
+                        </label>
+                        <button type="button" onClick={enableTwoFactor} disabled={twoFactorBusy || twoFactorCode.length !== 6} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
+                          {twoFactorBusy ? 'Validando...' : 'Confirmar e ativar'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {twoFactorNotice && <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{twoFactorNotice}</p>}
+            </section>
+          )}
           {providerStatus && (
             <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 space-y-4" aria-label="Situação da integração financeira">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
