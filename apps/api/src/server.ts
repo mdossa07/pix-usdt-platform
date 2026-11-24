@@ -1,3 +1,4 @@
+import { canBeDefaultDestination } from './wallets/wallet-eligibility.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -130,17 +131,16 @@ app.post('/v1/wallets', { preHandler: app.authenticate }, async (request, reply)
   if (data.walletType === 'HOSTED' && !data.vaspEntityCountry) return reply.code(400).send({ error: 'vasp_entity_country_required' });
   const merchant = await merchantFor(request);
   if (data.holderTaxId && data.holderTaxId !== decryptPii(merchant.taxIdEncrypted)) return reply.code(400).send({ error: 'wallet_holder_must_match_merchant_identity' });
-  const wallet = await prisma.$transaction(async tx => {
-    if (data.makeDefault) await tx.walletDestination.updateMany({ where: { merchantId: merchant.id }, data: { isDefault: false } });
-    return tx.walletDestination.create({ data: {
-      merchantId: merchant.id, label: data.label, exchangeName: data.exchangeName, networkCode: data.networkCode,
-      addressEncrypted: encryptPii(data.address), addressLast8: data.address.slice(-8), tagEncrypted: data.tag ? encryptPii(data.tag) : null,
-      walletType: data.walletType as WalletType, walletOwner: 'SELF', holderName: data.holderName,
-      holderTaxIdEncrypted: data.holderTaxId ? encryptPii(data.holderTaxId) : null,
-      holderCountry: data.holderCountry.toUpperCase(), vaspEntityCountry: data.vaspEntityCountry?.toUpperCase() ?? null,
-      isDefault: data.makeDefault, status: WalletStatus.PENDING_VERIFICATION,
-    } });
-  });
+  // New destinations stay pending until reviewed; never replace a verified
+  // default with an address that has not passed ownership/Travel Rule checks.
+  const wallet = await prisma.walletDestination.create({ data: {
+    merchantId: merchant.id, label: data.label, exchangeName: data.exchangeName, networkCode: data.networkCode,
+    addressEncrypted: encryptPii(data.address), addressLast8: data.address.slice(-8), tagEncrypted: data.tag ? encryptPii(data.tag) : null,
+    walletType: data.walletType as WalletType, walletOwner: 'SELF', holderName: data.holderName,
+    holderTaxIdEncrypted: data.holderTaxId ? encryptPii(data.holderTaxId) : null,
+    holderCountry: data.holderCountry.toUpperCase(), vaspEntityCountry: data.vaspEntityCountry?.toUpperCase() ?? null,
+    isDefault: false, status: WalletStatus.PENDING_VERIFICATION,
+  } });
   await audit(request, 'WALLET_REGISTERED', 'WALLET', wallet.id, { networkCode: wallet.networkCode, walletType: wallet.walletType, exchangeName: wallet.exchangeName });
   return reply.code(201).send({ id: wallet.id, label: wallet.label, exchangeName: wallet.exchangeName, networkCode: wallet.networkCode, addressLast8: wallet.addressLast8, status: wallet.status, note: 'Carteira cadastrada; aguarda validação de titularidade e Travel Rule pelo provedor.' });
 });
@@ -150,7 +150,7 @@ app.post('/v1/wallets/:id/default', { preHandler: app.authenticate }, async (req
   const { id } = request.params as { id: string };
   const wallet = await prisma.walletDestination.findFirst({ where: { id, merchantId: merchant.id } });
   if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
-  if (wallet.status !== WalletStatus.VERIFIED || !wallet.isVerified) {
+  if (!canBeDefaultDestination(wallet.status, wallet.isVerified)) {
     return reply.code(409).send({
       error: 'wallet_not_verified',
       message: 'Somente uma carteira verificada pode ser definida como padrão.',
@@ -508,15 +508,13 @@ app.post('/v1/merchant/wallets', { preHandler: [app.authenticate] }, async (requ
   const parsed = schema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_wallet', details: parsed.error.flatten() });
   if (!validateAddress(parsed.data.networkCode, parsed.data.address)) return reply.code(400).send({ error: 'wallet_address_network_mismatch' });
-  if (parsed.data.isDefault) {
-    await prisma.walletDestination.updateMany({ where: { merchantId: merchant.id, isDefault: true }, data: { isDefault: false } });
-  }
+  // The compatibility endpoint obeys the same pending-by-default policy.
   const wallet = await prisma.walletDestination.create({ data: {
     merchantId: merchant.id, label: parsed.data.label, exchangeName: parsed.data.exchangeName, networkCode: parsed.data.networkCode, currencySymbol: 'usdt',
     addressEncrypted: encryptPii(parsed.data.address), addressLast8: parsed.data.address.slice(-8),
     tagEncrypted: parsed.data.memoTag ? encryptPii(parsed.data.memoTag) : null,
     holderName: parsed.data.holderName,
-    isDefault: parsed.data.isDefault, status: WalletStatus.PENDING_VERIFICATION,
+    isDefault: false, status: WalletStatus.PENDING_VERIFICATION,
   }});
   await audit(request, 'WALLET_CREATED', 'WALLET_DESTINATION', wallet.id, { networkCode: wallet.networkCode });
   return reply.code(201).send({ id: wallet.id, label: wallet.label, networkCode: wallet.networkCode, addressLast8: wallet.addressLast8, status: wallet.status, isDefault: wallet.isDefault });
