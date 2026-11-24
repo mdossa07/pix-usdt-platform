@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { Copy, CheckCircle2, XCircle, Clock, ShieldCheck } from 'lucide-react';
+import { Copy, CheckCircle2, XCircle, Clock, ShieldCheck, Loader2, AlertTriangle } from 'lucide-react';
 
 type CheckoutData = {
   id: string;
@@ -18,23 +18,69 @@ type CheckoutData = {
   mode: string;
 };
 
+const POLL_INTERVAL_MS = 3000;
+const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELED', 'EXPIRED'];
+
 export default function CheckoutPage() {
   const params = useParams();
   const externalId = params.externalId as string;
   const [data, setData] = useState<CheckoutData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<string | null>(null);
+  const [polling, setPolling] = useState(true);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchStatus = useCallback(async () => {
+    if (!externalId) return;
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+      const res = await fetch(`${baseUrl}/v1/checkout/${externalId}`);
+      if (!res.ok) throw new Error('Pagamento não encontrado');
+      const json = await res.json();
+      setData(json);
+
+      if (TERMINAL_STATUSES.includes(json.status) || json.expired) {
+        setPolling(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro desconhecido');
+      setPolling(false);
+    }
+  }, [externalId]);
 
   useEffect(() => {
-    if (!externalId) return;
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000'}/v1/checkout/${externalId}`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Pagamento não encontrado');
-        return res.json();
-      })
-      .then(setData)
-      .catch((err) => setError(err.message));
-  }, [externalId]);
+    fetchStatus();
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    if (!polling) return;
+    timerRef.current = setInterval(fetchStatus, POLL_INTERVAL_MS);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [polling, fetchStatus]);
+
+  useEffect(() => {
+    if (!data?.expiresAt) {
+      setTimeLeft(null);
+      return;
+    }
+    const updateCountdown = () => {
+      const diff = new Date(data.expiresAt!).getTime() - Date.now();
+      if (diff <= 0) {
+        setTimeLeft('Expirado');
+        setPolling(false);
+        return;
+      }
+      const mins = Math.floor(diff / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${mins}:${secs.toString().padStart(2, '0')}`);
+    };
+    updateCountdown();
+    const countdownTimer = setInterval(updateCountdown, 1000);
+    return () => clearInterval(countdownTimer);
+  }, [data?.expiresAt]);
 
   const handleCopy = async () => {
     if (!data?.pixCopyPaste) return;
@@ -46,6 +92,22 @@ export default function CheckoutPage() {
   const formatBrl = (cents: string) => {
     const value = Number(cents) / 100;
     return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const getStatusVisual = (status: string, expired: boolean) => {
+    if (expired) return { icon: AlertTriangle, label: 'EXPIRADO', className: 'expired' };
+    switch (status) {
+      case 'COMPLETED':
+        return { icon: CheckCircle2, label: 'PAGAMENTO CONFIRMADO', className: 'completed' };
+      case 'FAILED':
+      case 'CANCELED':
+        return { icon: XCircle, label: status.replace(/_/g, ' '), className: 'failed' };
+      case 'PIX_PENDING':
+      case 'PENDING':
+        return { icon: Loader2, label: 'AGUARDANDO PAGAMENTO', className: 'pending', spin: true };
+      default:
+        return { icon: Clock, label: status.replace(/_/g, ' '), className: 'default' };
+    }
   };
 
   if (error) {
@@ -64,12 +126,16 @@ export default function CheckoutPage() {
     return (
       <div className="checkout-page">
         <div className="checkout-card loading">
-          <Clock size={32} className="spin" />
+          <Loader2 size={32} className="spin" />
           <p>Carregando pagamento...</p>
         </div>
       </div>
     );
   }
+
+  const visual = getStatusVisual(data.status, data.expired);
+  const StatusIcon = visual.icon;
+  const isTerminal = TERMINAL_STATUSES.includes(data.status) || data.expired;
 
   return (
     <div className="checkout-page">
@@ -96,23 +162,33 @@ export default function CheckoutPage() {
           </div>
         )}
 
-        <div className="pix-section">
-          <span className="label">PIX Copia e Cola</span>
-          <div className="pix-box">
-            <code>{data.pixCopyPaste}</code>
-            <button onClick={handleCopy} className="copy-btn" aria-label="Copiar PIX">
-              {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
-              {copied ? 'Copiado!' : 'Copiar'}
-            </button>
+        {!isTerminal && (
+          <div className="pix-section">
+            <div className="label-row">
+              <span className="label">PIX Copia e Cola</span>
+              {timeLeft && <span className={`countdown ${timeLeft === 'Expirado' ? 'expired-text' : ''}`}>{timeLeft}</span>}
+            </div>
+            <div className="pix-box">
+              <code>{data.pixCopyPaste}</code>
+              <button onClick={handleCopy} className="copy-btn" aria-label="Copiar PIX">
+                {copied ? <CheckCircle2 size={18} /> : <Copy size={18} />}
+                {copied ? 'Copiado!' : 'Copiar'}
+              </button>
+            </div>
           </div>
+        )}
+
+        <div className={`status-feedback ${visual.className}`}>
+          <StatusIcon size={24} className={visual.spin ? 'spin' : ''} />
+          <span className="status-label">{visual.label}</span>
+          {polling && !isTerminal && <span className="polling-indicator">Atualizando automaticamente...</span>}
         </div>
 
-        <div className="status-bar">
-          <span className={`status-badge ${data.status.toLowerCase().replace('_', '-')}`}>
-            {data.status.replace(/_/g, ' ')}
-          </span>
-          {data.expired && <span className="expired-badge">EXPIRADO</span>}
-        </div>
+        {isTerminal && data.status === 'COMPLETED' && (
+          <div className="success-details">
+            <p>Seu pagamento foi confirmado e o merchant já foi notificado.</p>
+          </div>
+        )}
 
         <footer className="checkout-footer">
           <p className="disclaimer">
@@ -159,6 +235,9 @@ export default function CheckoutPage() {
         .brand-icon { color: #22d3ee; }
         .brand-name { font-weight: 600; font-size: 0.9rem; color: #94a3b8; }
         .label { display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .label-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 0.25rem; }
+        .countdown { font-size: 0.8rem; font-weight: 600; color: #fbbf24; font-variant-numeric: tabular-nums; }
+        .expired-text { color: #f87171; }
         .merchant-info { margin-bottom: 1.5rem; }
         .merchant-info strong { font-size: 1.1rem; color: #f1f5f9; }
         .amount-display { margin-bottom: 1.5rem; }
@@ -198,20 +277,25 @@ export default function CheckoutPage() {
           transition: background 0.2s;
         }
         .copy-btn:hover { background: #06b6d4; }
-        .status-bar { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-        .status-badge {
-          font-size: 0.75rem;
-          font-weight: 600;
-          padding: 0.25rem 0.75rem;
-          border-radius: 999px;
-          text-transform: uppercase;
-          background: #334155;
-          color: #e2e8f0;
+        .status-feedback {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 1rem;
+          border-radius: 8px;
+          margin-bottom: 1.5rem;
+          text-align: center;
         }
-        .status-badge.pix-pending { background: #854d0e; color: #fef3c7; }
-        .status-badge.completed { background: #166534; color: #dcfce7; }
-        .status-badge.failed, .status-badge.canceled { background: #991b1b; color: #fecaca; }
-        .expired-badge { background: #991b1b; color: #fecaca; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 999px; }
+        .status-feedback.pending { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+        .status-feedback.completed { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
+        .status-feedback.failed, .status-feedback.expired { background: rgba(248, 113, 113, 0.1); color: #f87171; }
+        .status-feedback.default { background: rgba(148, 163, 184, 0.1); color: #94a3b8; }
+        .status-label { font-size: 0.9rem; font-weight: 700; letter-spacing: 0.03em; }
+        .polling-indicator { font-size: 0.7rem; opacity: 0.7; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+        .success-details { text-align: center; margin-bottom: 1.5rem; }
+        .success-details p { margin: 0; color: #4ade80; font-size: 0.85rem; }
         .checkout-footer { border-top: 1px solid #334155; padding-top: 1rem; }
         .disclaimer { font-size: 0.75rem; color: #fbbf24; margin: 0 0 0.5rem; line-height: 1.4; }
         .network-info { font-size: 0.7rem; color: #64748b; margin: 0; }
