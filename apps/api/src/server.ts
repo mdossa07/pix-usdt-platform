@@ -326,6 +326,59 @@ app.post('/v1/admin/2fa/enable', {
   return { enabled: true, enabledAt, recoveryCodes };
 });
 
+app.post('/v1/admin/2fa/recovery-codes/regenerate', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const parsed = z.object({
+    password: z.string().min(1).max(128),
+    code: z.string().regex(/^\\d{6}$/),
+  }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_recovery_code_regeneration' });
+
+  const user = await prisma.user.findUnique({ where: { id: userId(request) } });
+  if (!user || !user.isActive || !user.twoFactorEnabledAt || !user.twoFactorSecretEncrypted) {
+    return reply.code(409).send({ error: 'two_factor_not_enabled' });
+  }
+  if (!(await argon2.verify(user.passwordHash, parsed.data.password))) {
+    return reply.code(401).send({ error: 'invalid_credentials' });
+  }
+
+  const matchedStep = matchTotpCounter(decryptPii(user.twoFactorSecretEncrypted), parsed.data.code);
+  if (matchedStep === null) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+
+  const recoveryCodes = generateRecoveryCodes();
+  const rotated = await prisma.$transaction(async (tx) => {
+    const consumed = await tx.user.updateMany({
+      where: {
+        id: user.id,
+        isActive: true,
+        twoFactorEnabledAt: { not: null },
+        OR: [
+          { twoFactorLastUsedStep: null },
+          { twoFactorLastUsedStep: { lt: BigInt(matchedStep) } },
+        ],
+      },
+      data: {
+        twoFactorLastUsedStep: BigInt(matchedStep),
+        lastLoginAt: new Date(),
+      },
+    });
+    if (consumed.count !== 1) return false;
+
+    await tx.userTwoFactorRecoveryCode.deleteMany({ where: { userId: user.id, usedAt: null } });
+    await tx.userTwoFactorRecoveryCode.createMany({
+      data: recoveryCodes.map(code => ({ userId: user.id, codeHash: hashRecoveryCode(code) })),
+    });
+    return true;
+  });
+  if (!rotated) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+
+  await audit(request, 'ADMIN_2FA_RECOVERY_CODES_ROTATED', 'USER', user.id, { recoveryCodesIssued: recoveryCodes.length });
+  return { recoveryCodes };
+});
+
 app.get('/v1/wallets', { preHandler: app.authenticate }, async (request) => {
   const merchant = await merchantFor(request);
   const wallets = await prisma.walletDestination.findMany({ where: { merchantId: merchant.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }] });
