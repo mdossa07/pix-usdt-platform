@@ -42,8 +42,12 @@ export function formatUsdtUnits(units: bigint, fractionDigits = 4): string {
   return digits > 0 ? `${formattedWhole},${fraction}` : formattedWhole;
 }
 
-export function countActionablePayments(payments: readonly Pick<AdminPaymentMetric, 'status'>[]): number {
+export function getActionablePayments<T extends { status: string }>(payments: readonly T[]): T[] {
   return payments.filter(({ status }) => (
     !terminalPaymentStatuses.has(status) && status !== 'PIX_PENDING'
-  )).length;
+  ));
+}
+
+export function countActionablePayments(payments: readonly Pick<AdminPaymentMetric, 'status'>[]): number {
+  return getActionablePayments(payments).length;
 }
