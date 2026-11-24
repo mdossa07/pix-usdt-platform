@@ -27,7 +27,7 @@ import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/ide
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
-import { MERCHANT_WEBHOOK_EVENTS } from './webhooks/outbound-outbox.js';
+import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
 import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
 import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
 
