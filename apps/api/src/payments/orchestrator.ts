@@ -1,5 +1,4 @@
 import { PrismaClient, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
 import type { PaymentProvider } from '../providers/provider-contract.js';
 import { decryptPii } from '../security/crypto.js';
@@ -20,6 +19,10 @@ export class PaymentOrchestrator {
   ) {}
 
   async handlePixConfirmed(paymentId: string, brlCents: bigint): Promise<void> {
+    if (this.config.mode !== 'mock') {
+      await this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.UNDER_REVIEW, failureMessage: 'Provider settlement is blocked until real FX quoting and two-beneficiary payouts are certified.' } });
+      return;
+    }
     await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({ where: { id: paymentId } });
       if (!payment) throw new Error('payment_not_found');
@@ -115,7 +118,7 @@ export class PaymentOrchestrator {
     }
 
     // Reuse existing idempotency key on retry to guarantee provider-side dedup
-    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:merchant:${randomUUID()}`;
+    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:merchant:v1`;
     try {
       // Decrypt PII before sending to provider (audit item #7)
       const decryptedAddress = decryptPii(wallet.addressEncrypted);
@@ -221,12 +224,14 @@ export class PaymentOrchestrator {
       }
     }
 
-    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { walletDestination: true } });
     if (!payment.commissionUsdt) return;
 
-    const platformWalletRecord = await this.prisma.platformWallet.findFirst({ where: { isEnabled: true } });
-    const platformWalletEnc = platformWalletRecord?.addressEncrypted ?? process.env.PLATFORM_USDT_WALLET_ADDRESS;
-    const platformNetwork = platformWalletRecord?.networkCode ?? process.env.PLATFORM_USDT_NETWORK ?? 'TRC20';
+    // The platform commission must use the merchant payout chain. Never fall back
+    // to an unencrypted environment variable or an unrelated network wallet.
+    const platformWalletRecord = await this.prisma.platformWallet.findUnique({ where: { networkCode: payment.walletDestination.networkCode } });
+    const platformWalletEnc = platformWalletRecord?.isEnabled ? platformWalletRecord.addressEncrypted : null;
+    const platformNetwork = payment.walletDestination.networkCode;
 
     if (!platformWalletEnc) {
       await this.prisma.payment.update({
@@ -242,7 +247,7 @@ export class PaymentOrchestrator {
     const commissionAmount = payment.commissionUsdt;
     if (!commissionAmount) return;
 
-    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:platform:${randomUUID()}`;
+    const idempotencyKey = existing?.idempotencyKey ?? `${paymentId}:platform:v1`;
     try {
       const leg = await this.provider.settlePlatformCommission({
         platformWallet,

@@ -2,11 +2,11 @@ import { Worker } from 'bullmq';
 import { createQueueConnection } from './connection.js';
 import { PrismaClient } from '@prisma/client';
 import { PaymentOrchestrator } from '../payments/orchestrator.js';
-import { FoxbitAdapter } from '../providers/foxbit/foxbit-adapter.js';
+import { createPaymentProvider } from '../providers/provider-factory.js';
 import { config } from '../config.js';
 
 const prisma = new PrismaClient();
-const provider = new FoxbitAdapter(config.PAYMENTS_MODE);
+const provider = createPaymentProvider();
 const orchestrator = new PaymentOrchestrator(prisma, provider, {
   commissionBps: config.PLATFORM_COMMISSION_BPS,
   mockRate: config.MOCK_USDT_PER_BRL,

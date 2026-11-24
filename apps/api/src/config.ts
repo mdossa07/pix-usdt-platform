@@ -31,10 +31,9 @@ const schema = z.object({
 
 export const config = schema.parse(process.env);
 
-// Fail closed for production; sandbox allowed for integration testing with real provider credentials.
-if (config.NODE_ENV === 'production' && config.PAYMENTS_MODE !== 'live') {
-  throw new Error('Production requires PAYMENTS_MODE=live and explicit provider credentials.');
-}
-if (config.PAYMENTS_MODE === 'live' && config.NODE_ENV !== 'production') {
-  throw new Error('PAYMENTS_MODE=live is only allowed in production environment.');
+// Production can serve the application while financial execution remains mock-only.
+// Real/sandbox execution is blocked until conversion quotes, recipient registration,
+// Travel Rule and both payout legs are certified end-to-end.
+if (config.PAYMENTS_MODE !== 'mock') {
+  throw new Error('PROVIDER_HOMOLOGATION_REQUIRED: use PAYMENTS_MODE=mock until the complete provider flow is certified.');
 }
