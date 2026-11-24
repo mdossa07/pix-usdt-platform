@@ -30,7 +30,7 @@ const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
 
 await app.register(helmet);
-await app.register(cors, { origin: config.APP_URL, credentials: true });
+await app.register(cors, { origin: config.APP_URL, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-csrf-token'] });
 await app.register(rateLimit, { max: 80, timeWindow: '1 minute' });
 await app.register(jwt, { secret: config.JWT_SECRET, sign: { expiresIn: '2h' } });
 await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
@@ -266,7 +266,8 @@ app.post('/v1/auth/2fa/verify', {
 });
 
 app.get('/v1/auth/csrf', { preHandler: [app.authenticate] }, async (request, reply) => {
-  const csrfToken = issueBrowserSession(reply, { id: userId(request), role: request.user.role });
+  const csrfToken = (request.user as { csrfToken?: string }).csrfToken;
+  if (!csrfToken) return reply.code(403).send({ error: 'csrf_session_not_available' });
   return { csrfToken };
 });
 
