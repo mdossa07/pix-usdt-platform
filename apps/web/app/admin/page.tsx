@@ -40,6 +40,17 @@ interface AuditEntry {
   createdAt: string;
 }
 
+interface ProviderStatus {
+  provider: string;
+  enabled: boolean;
+  adapterReady: boolean;
+  credentialsConfigured: boolean;
+  connection: string;
+  paymentsMode: string;
+  liveOperationsEnabled: boolean;
+  pendingApprovals: string[];
+}
+
 interface WalletReviewRecord {
   id: string;
   label: string;
@@ -70,6 +81,7 @@ export default function AdminDashboard() {
   const [merchants, setMerchants] = useState<MerchantRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [wallets, setWallets] = useState<WalletReviewRecord[]>([]);
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -86,12 +98,14 @@ export default function AdminDashboard() {
       apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
       apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
       apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
+      apiRequest<ProviderStatus>('/v1/admin/provider-status', {}, token),
     ])
-      .then(([p, m, a, w]) => {
+      .then(([p, m, a, w, provider]) => {
         setPayments(p);
         setMerchants(m);
         setAuditLogs(a);
         setWallets(w);
+        setProviderStatus(provider);
       })
       .catch((err) => {
         if (err instanceof Error && err.message === 'unauthorized') {
@@ -236,6 +250,40 @@ export default function AdminDashboard() {
 
       {tab === 'overview' && (
         <div className="space-y-6">
+          {providerStatus && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 space-y-4" aria-label="Situação da integração financeira">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">Integração financeira</p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-900">{providerStatus.provider} · modo {providerStatus.paymentsMode.toUpperCase()}</h3>
+                  <p className="mt-1 text-sm text-slate-600">Credenciais configuradas não significam que o provedor esteja homologado ou autorizado a movimentar fundos.</p>
+                </div>
+                <span className="inline-flex rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
+                  Pagamentos reais bloqueados
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                <div className="rounded-lg border border-amber-100 bg-white p-3">
+                  <p className="text-slate-500">Credenciais</p>
+                  <p className="mt-1 font-semibold text-slate-900">{providerStatus.credentialsConfigured ? 'Configuradas' : 'Ausentes'}</p>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-white p-3">
+                  <p className="text-slate-500">Adaptador homologado</p>
+                  <p className="mt-1 font-semibold text-slate-900">{providerStatus.adapterReady ? 'Sim' : 'Não'}</p>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-white p-3">
+                  <p className="text-slate-500">Operação real habilitada</p>
+                  <p className="mt-1 font-semibold text-slate-900">{providerStatus.liveOperationsEnabled ? 'Sim' : 'Não'}</p>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-800">Homologações pendentes</p>
+                <ul className="grid list-disc gap-x-6 gap-y-1 pl-5 text-sm text-slate-700 md:grid-cols-2">
+                  {providerStatus.pendingApprovals.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </div>
+            </section>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Comissão liquidada</p>
