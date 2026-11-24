@@ -55,7 +55,7 @@ test('pins a public DNS answer and rejects DNS failures', async () => {
     assert.equal(hostname, 'hooks.example.com');
     return [{ address: '8.8.8.8', family: 4 }];
   });
-  assert.equal(target.addresses[0].address, '8.8.8.8');
+  assert.equal(target.addresses.at(0)?.address, '8.8.8.8');
   await assert.rejects(resolvePublicWebhookTarget('https://hooks.example.com', async () => {
     throw new Error('dns error');
   }), /webhook_host_resolution_failed/);
