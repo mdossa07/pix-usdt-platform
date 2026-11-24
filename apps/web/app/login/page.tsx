@@ -27,17 +27,18 @@ export default function LoginPage() {
 
     try {
       if (challengeToken) {
-        const result = await apiRequest<{ token: string; user: AuthUser }>('/v1/auth/2fa/verify', {
+        const result = await apiRequest<{ csrfToken: string; user: AuthUser }>('/v1/auth/2fa/verify', {
           method: 'POST',
           body: JSON.stringify({ challengeToken, code: twoFactorCode }),
         });
-        localStorage.setItem('pixsplit_token', result.token);
+        sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+        localStorage.setItem('pixsplit_authenticated', '1');
         window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
         return;
       }
 
       const result = await apiRequest<{
-        token?: string;
+        csrfToken?: string;
         requiresTwoFactor?: boolean;
         challengeToken?: string;
         user?: AuthUser;
@@ -53,8 +54,9 @@ export default function LoginPage() {
         return;
       }
 
-      if (!result.token || !result.user) throw new Error('Resposta de autenticação inválida.');
-      localStorage.setItem('pixsplit_token', result.token);
+      if (!result.csrfToken || !result.user) throw new Error('Resposta de autenticação inválida.');
+      sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
+      localStorage.setItem('pixsplit_authenticated', '1');
       window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Não foi possível entrar.';
