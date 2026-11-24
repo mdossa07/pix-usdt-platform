@@ -338,6 +338,103 @@ app.delete('/v1/merchant/api-keys/:keyId', { preHandler: [app.authenticate] }, a
   return { success: true, revoked: true };
 });
 
+// --- Merchant Wallet Management ---
+app.get('/v1/merchant/wallets', { preHandler: [app.authenticate] }, async (request) => {
+  const merchant = await merchantFor(request);
+  const wallets = await prisma.walletDestination.findMany({
+    where: { merchantId: merchant.id },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { wallets: wallets.map(w => ({ id: w.id, label: w.label, networkCode: w.networkCode, addressLast8: w.addressLast8, status: w.status, isDefault: w.isDefault, createdAt: w.createdAt })) };
+});
+
+app.post('/v1/merchant/wallets', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const schema = z.object({ label: z.string().min(1).max(60), exchangeName: z.string().min(1).max(60), networkCode: z.enum(['polygon', 'tron']), address: z.string().min(20).max(128), memoTag: z.string().max(64).optional(), holderName: z.string().min(1).max(120), isDefault: z.boolean().default(false) });
+  const parsed = schema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_wallet', details: parsed.error.flatten() });
+  if (!validateAddress(parsed.data.networkCode, parsed.data.address)) return reply.code(400).send({ error: 'wallet_address_network_mismatch' });
+  if (parsed.data.isDefault) {
+    await prisma.walletDestination.updateMany({ where: { merchantId: merchant.id, isDefault: true }, data: { isDefault: false } });
+  }
+  const wallet = await prisma.walletDestination.create({ data: {
+    merchantId: merchant.id, label: parsed.data.label, exchangeName: parsed.data.exchangeName, networkCode: parsed.data.networkCode, currencySymbol: 'usdt',
+    addressEncrypted: encryptPii(parsed.data.address), addressLast8: parsed.data.address.slice(-8),
+    tagEncrypted: parsed.data.memoTag ? encryptPii(parsed.data.memoTag) : null,
+    holderName: parsed.data.holderName,
+    isDefault: parsed.data.isDefault, status: WalletStatus.PENDING_VERIFICATION,
+  }});
+  await audit(request, 'WALLET_CREATED', 'WALLET_DESTINATION', wallet.id, { networkCode: wallet.networkCode });
+  return reply.code(201).send({ id: wallet.id, label: wallet.label, networkCode: wallet.networkCode, addressLast8: wallet.addressLast8, status: wallet.status, isDefault: wallet.isDefault });
+});
+
+app.delete('/v1/merchant/wallets/:id', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const { id } = request.params as { id: string };
+  const wallet = await prisma.walletDestination.findFirst({ where: { id, merchantId: merchant.id } });
+  if (!wallet) return reply.code(404).send({ error: 'wallet_not_found' });
+  await prisma.walletDestination.update({ where: { id }, data: { status: WalletStatus.DISABLED } });
+  await audit(request, 'WALLET_DISABLED', 'WALLET_DESTINATION', id, {});
+  return { success: true, disabled: true };
+});
+
+// --- Merchant Transaction History Export ---
+app.get('/v1/merchant/history/export', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const payments = await prisma.payment.findMany({
+    where: { merchantId: merchant.id },
+    include: { transfers: true, walletDestination: true },
+    orderBy: { createdAt: 'desc' },
+    take: 1000,
+  });
+  const csvHeader = 'ID,ExternalID,Status,AmountBRL,MerchantNetUSDT,CommissionUSDT,WalletNetwork,WalletAddress,MerchantTransferStatus,PlatformTransferStatus,CreatedAt\n';
+  const rows = payments.map(p => [
+    p.id, p.externalId, p.status, (Number(p.amountBrlCents) / 100).toFixed(2),
+    p.merchantNetUsdt?.toString() ?? '', p.commissionUsdt?.toString() ?? '',
+    p.walletDestination.networkCode, p.walletDestination.addressLast8,
+    p.merchantTransferStatus ?? '', p.platformTransferStatus ?? '',
+    p.createdAt.toISOString(),
+  ].join(',')).join('\n');
+  reply.header('Content-Type', 'text/csv').header('Content-Disposition', 'attachment; filename="pixsplit-history.csv"');
+  return csvHeader + rows;
+});
+
+// --- Admin: List Merchants ---
+app.get('/v1/admin/merchants', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const user = (request as any).user;
+  if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const merchants = await prisma.merchant.findMany({
+    select: { id: true, legalName: true, kycStatus: true, createdAt: true, user: { select: { email: true, isActive: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return merchants;
+});
+
+// --- Admin: Audit Logs ---
+app.get('/v1/admin/audit', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const user = (request as any).user;
+  if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const logs = await prisma.auditEvent.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  return logs;
+});
+
+// --- Admin: Retry Failed Payment ---
+app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, async (request, reply) => {
+  const user = (request as any).user;
+  if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const { id } = request.params as { id: string };
+  const payment = await prisma.payment.findUnique({ where: { id } });
+  if (!payment) return reply.code(404).send({ error: 'not_found' });
+  if (payment.status !== PaymentStatus.FAILED) {
+    return reply.code(400).send({ error: 'invalid_state', message: 'Only FAILED payments can be retried' });
+  }
+  await enqueueSettlement(payment.id, payment.amountBrlCents);
+  return { success: true, message: 'Settlement re-enqueued' };
+});
+
 // --- Protected Merchant Endpoint Example (HMAC Auth) ---
 app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
   // Placeholder: criação real de pagamento via API pública do merchant
