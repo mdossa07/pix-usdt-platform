@@ -517,29 +517,23 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     amountBrlCents: BigInt(amountBrlCents),
     payer: { name: payerName || undefined, taxId: payerTaxId || undefined },
     beneficiary: {
-      walletAddress: destWallet.addressEncrypted, // TODO: decrypt before sending to provider in real mode
+      walletAddress: decryptPii(destWallet.addressEncrypted),
       network: destWallet.networkCode,
-      memo: destWallet.tagEncrypted || undefined,
+      memo: destWallet.tagEncrypted ? decryptPii(destWallet.tagEncrypted) : undefined,
       exchangeName: destWallet.exchangeName,
       holderName: destWallet.holderName,
     },
   }, paymentExternalId);
 
-  // Calculate split for internal ledger tracking (does not affect provider charge)
-  const usdtAmount = mockBrlToUsdt(BigInt(amountBrlCents), '5.500000');
-  const split = calculateUsdtSplit(usdtAmount, 200); // 2% commission (200 bps)
-
+  // Conversion and 98/2 split happen only after a verified PIX confirmation.
   const payment = await prisma.payment.create({
     data: {
       merchantId: merchant.id,
       walletDestinationId,
       externalId: paymentExternalId,
       amountBrlCents: BigInt(amountBrlCents),
-      providerGrossUsdt: new Prisma.Decimal(split.totalUsdt),
-      commissionUsdt: new Prisma.Decimal(split.commissionUsdt),
-      merchantNetUsdt: new Prisma.Decimal(split.merchantUsdt),
-      commissionBps: 200,
-      status: PaymentStatus.CREATED,
+      commissionBps: config.PLATFORM_COMMISSION_BPS,
+      status: PaymentStatus.PIX_PENDING,
       providerOrderId: charge.providerChargeId,
       pixQrCodeBase64: charge.qrCodeBase64 ?? null,
       pixCopyPaste: charge.copyPaste,
@@ -559,9 +553,9 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     paymentId: payment.id,
     externalId: payment.externalId,
     amountBrlCents: Number(payment.amountBrlCents),
-    usdtAmount: payment.providerGrossUsdt?.toString() ?? '0',
-    merchantNetUsdt: payment.merchantNetUsdt?.toString() ?? '0',
-    commissionUsdt: payment.commissionUsdt?.toString() ?? '0',
+    usdtAmount: null,
+    merchantNetUsdt: null,
+    commissionUsdt: null,
     status: payment.status,
     pixQrCodeBase64: payment.pixQrCodeBase64,
     pixCopyPaste: payment.pixCopyPaste,

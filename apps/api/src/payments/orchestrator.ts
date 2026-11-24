@@ -21,45 +21,102 @@ export class PaymentOrchestrator {
 
   async handlePixConfirmed(paymentId: string, brlCents: bigint): Promise<void> {
     if (this.config.mode !== 'mock') {
-      await this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.UNDER_REVIEW, failureMessage: 'Provider settlement is blocked until real FX quoting and two-beneficiary payouts are certified.' } });
-      return;
-    }
-    await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
-      if (!payment) throw new Error('payment_not_found');
-      if (payment.status !== PaymentStatus.PIX_CONFIRMED && payment.status !== PaymentStatus.CONVERSION_PENDING) {
-        return; // already processed or in terminal state
-      }
-
-      const grossUsdt = mockBrlToUsdt(brlCents, this.config.mockRate); // TODO: real quote when live
-      const split = calculateUsdtSplit(grossUsdt, this.config.commissionBps);
-
-      await tx.payment.update({
+      await this.prisma.payment.update({
         where: { id: paymentId },
         data: {
-          status: PaymentStatus.CONVERSION_PENDING,
-          providerGrossUsdt: split.totalUsdt,
-          merchantNetUsdt: split.merchantUsdt,
-          commissionUsdt: split.commissionUsdt,
-          fxRate: this.config.mockRate,
-          paidAt: new Date(),
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'PROVIDER_HOMOLOGATION_REQUIRED',
+          failureMessage: 'Provider settlement is blocked until real FX quoting and two-beneficiary payouts are certified.',
         },
       });
+      return;
+    }
 
-      // Ledger entries for auditability (amounts as Decimal-compatible strings)
-      await tx.ledgerEntry.createMany({
-        data: [
-          { paymentId, accountCode: 'PIX_RECEIVABLE', asset: 'BRL', direction: LedgerDirection.DEBIT, amount: (brlCents / 100n).toString(), status: LedgerStatus.POSTED, reference: `${paymentId}:brl:recv` },
-          { paymentId, accountCode: 'USDT_GROSS', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.totalUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:gross` },
-          { paymentId, accountCode: 'PLATFORM_COMMISSION', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.commissionUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:comm` },
-          { paymentId, accountCode: 'MERCHANT_PAYABLE', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.merchantUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:merch` },
-        ],
-      });
+    // The database amount is authoritative; never trust a queue payload to change settlement value.
+    const shouldContinue = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!payment) throw new Error('payment_not_found');
+      if (brlCents !== payment.amountBrlCents) throw new Error('payment_amount_mismatch');
+
+      if (payment.status === PaymentStatus.PIX_CONFIRMED) {
+        const grossUsdt = mockBrlToUsdt(payment.amountBrlCents, this.config.mockRate);
+        const split = calculateUsdtSplit(grossUsdt, payment.commissionBps ?? this.config.commissionBps);
+        const brlWhole = payment.amountBrlCents / 100n;
+        const brlFraction = (payment.amountBrlCents % 100n).toString().padStart(2, '0');
+
+        await tx.payment.update({
+          where: { id: paymentId },
+          data: {
+            status: PaymentStatus.CONVERSION_PENDING,
+            providerGrossUsdt: split.totalUsdt,
+            merchantNetUsdt: split.merchantUsdt,
+            commissionUsdt: split.commissionUsdt,
+            fxRate: this.config.mockRate,
+            paidAt: payment.paidAt ?? new Date(),
+          },
+        });
+
+        // Unique ledger references plus skipDuplicates make repeated webhook deliveries harmless.
+        await tx.ledgerEntry.createMany({
+          data: [
+            { paymentId, accountCode: 'PIX_RECEIVABLE', asset: 'BRL', direction: LedgerDirection.DEBIT, amount: `${brlWhole}.${brlFraction}`, status: LedgerStatus.POSTED, reference: `${paymentId}:brl:recv` },
+            { paymentId, accountCode: 'USDT_GROSS', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.totalUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:gross` },
+            { paymentId, accountCode: 'PLATFORM_COMMISSION', asset: 'USDT', direction: LedgerDirection.DEBIT, amount: split.commissionUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:comm` },
+            { paymentId, accountCode: 'MERCHANT_PAYABLE', asset: 'USDT', direction: LedgerDirection.CREDIT, amount: split.merchantUsdt, status: LedgerStatus.POSTED, reference: `${paymentId}:usdt:merch` },
+          ],
+          skipDuplicates: true,
+        });
+        return true;
+      }
+
+      const resumableStatuses = [
+        PaymentStatus.CONVERSION_PENDING,
+        PaymentStatus.CRYPTO_CREDITED,
+        PaymentStatus.COMMISSION_TRANSFER_PENDING,
+        PaymentStatus.MERCHANT_PAYOUT_PENDING,
+        PaymentStatus.PLATFORM_PAYOUT_PENDING,
+        PaymentStatus.UNDER_REVIEW,
+        PaymentStatus.FAILED,
+      ];
+      return resumableStatuses.includes(payment.status)
+        && payment.providerGrossUsdt !== null
+        && payment.merchantNetUsdt !== null
+        && payment.commissionUsdt !== null;
     }, { isolationLevel: 'Serializable' });
 
-    // Trigger settlements outside transaction to avoid long locks
+    if (!shouldContinue) return;
+
+    // Do not pay either beneficiary until the merchant and both destination wallets
+    // have passed onboarding checks. This avoids charging the 2% fee while the 98%
+    // merchant leg is ineligible.
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: { walletDestination: true, merchant: true },
+    });
+    const platformWallet = await this.prisma.platformWallet.findUnique({
+      where: { networkCode: payment.walletDestination.networkCode },
+    });
+    if (
+      !payment.merchant.isEnabled
+      || payment.merchant.kycStatus !== 'APPROVED'
+      || payment.walletDestination.status !== 'VERIFIED'
+      || !platformWallet?.isEnabled
+    ) {
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'SETTLEMENT_PREREQUISITES_NOT_MET',
+          failureMessage: 'Merchant approval, verified destination wallet, and enabled platform wallet are required before settlement.',
+        },
+      });
+      return;
+    }
+
+    // Run independent legs even if the first one fails; global completion is synced only after both.
     await this.settleMerchantPayout(paymentId);
     await this.settlePlatformCommission(paymentId);
+    await this.syncPaymentGlobalStatus(paymentId);
   }
 
   async settleMerchantPayout(paymentId: string): Promise<void> {
@@ -98,9 +155,17 @@ export class PaymentOrchestrator {
           });
           return;
         }
-        // PENDING or null: fall through to retry with same idempotency key
+        if (remoteStatus?.status === 'PENDING') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.PROCESSING } });
+          });
+          return;
+        }
+        // null means the provider explicitly reported that this reference was not found.
       } catch {
-        // Provider unreachable; proceed with cautious retry using existing idempotency key
+        // A status lookup failure is ambiguous. Never submit another payout while its outcome is unknown.
+        return;
       }
     }
 
@@ -140,7 +205,7 @@ export class PaymentOrchestrator {
         },
       }, idempotencyKey);
 
-      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING;
+      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
 
       await this.prisma.$transaction(async (tx) => {
         await tx.transfer.upsert({
@@ -178,8 +243,9 @@ export class PaymentOrchestrator {
         where: { id: paymentId },
         data: {
           merchantTransferStatus: TransferStatus.FAILED,
-          status: PaymentStatus.FAILED,
-          failureMessage: `Merchant payout failed: ${(error as Error).message}`,
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'MERCHANT_PAYOUT_UNCONFIRMED',
+          failureMessage: 'Merchant payout could not be confirmed. Provider reconciliation is required before another submission.',
         },
       });
     }
@@ -220,8 +286,17 @@ export class PaymentOrchestrator {
           });
           return;
         }
+        if (remoteStatus?.status === 'PENDING') {
+          await this.prisma.$transaction(async (tx) => {
+            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.PROCESSING } });
+          });
+          return;
+        }
+        // null means the provider explicitly reported that this reference was not found.
       } catch {
-        // Provider unreachable; proceed with cautious retry
+        // A status lookup failure is ambiguous. Never submit another payout while its outcome is unknown.
+        return;
       }
     }
 
@@ -256,7 +331,7 @@ export class PaymentOrchestrator {
         amountUsdt: commissionAmount.toString(),
       }, idempotencyKey);
 
-      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : TransferStatus.PROCESSING;
+      const newStatus = leg.status === 'COMPLETED' ? TransferStatus.COMPLETED : leg.status === 'FAILED' ? TransferStatus.FAILED : TransferStatus.PROCESSING;
 
       await this.prisma.$transaction(async (tx) => {
         await tx.transfer.upsert({
@@ -267,7 +342,7 @@ export class PaymentOrchestrator {
             kind: TransferKind.PLATFORM_COMMISSION,
             amountUsdt: commissionAmount,
             networkCode: platformNetwork,
-            destinationAddressEnc: platformWallet,
+            destinationAddressEnc: platformWalletRecord.addressEncrypted,
             providerWithdrawalSn: leg.providerTransferId,
             txHash: leg.txHash,
             idempotencyKey,
@@ -294,8 +369,9 @@ export class PaymentOrchestrator {
         where: { id: paymentId },
         data: {
           platformTransferStatus: TransferStatus.FAILED,
-          status: PaymentStatus.FAILED,
-          failureMessage: `Platform commission failed: ${(error as Error).message}`,
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'PLATFORM_PAYOUT_UNCONFIRMED',
+          failureMessage: 'Platform commission payout could not be confirmed. Provider reconciliation is required before another submission.',
         },
       });
     }
@@ -320,18 +396,14 @@ export class PaymentOrchestrator {
     }
 
     if (merchant === TransferStatus.FAILED || platform === TransferStatus.FAILED) {
-      // Only mark globally failed if the other leg is not still processing
-      const otherProcessing =
-        (merchant === TransferStatus.PROCESSING || platform === TransferStatus.PROCESSING);
-      if (!otherProcessing) {
-        await this.prisma.payment.update({
-          where: { id: paymentId },
-          data: {
-            status: PaymentStatus.FAILED,
-            failureMessage: payment.failureMessage ?? 'One or more settlement legs failed',
-          },
-        });
-      }
+      await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: PaymentStatus.UNDER_REVIEW,
+          failureCode: 'PAYOUT_LEG_REQUIRES_REVIEW',
+          failureMessage: payment.failureMessage ?? 'At least one payout leg requires provider reconciliation.',
+        },
+      });
       return;
     }
 
