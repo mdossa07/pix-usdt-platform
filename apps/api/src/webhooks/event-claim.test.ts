@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { encryptPii } from '../security/crypto.js';
 import { claimWebhookEvent, completeWebhookEvent } from './event-claim.js';
 
 const schema = new URL(process.env.DATABASE_URL!);
@@ -46,5 +48,68 @@ describe('webhook event claims', () => {
     const recovered = await claimWebhookEvent(db, input, new Date('2026-01-01T00:02:00Z'));
     expect(recovered.status).toBe('claimed');
     if (recovered.status === 'claimed') expect(recovered.token).not.toBe(first.token);
+  });
+
+  it('verifies and backfills legacy rows from their encrypted original payload', async () => {
+    const rawPayload = '{"id":"legacy-1","status":"paid"}';
+    await db.webhookEvent.create({
+      data: {
+        provider,
+        providerEventId: 'legacy-1',
+        eventType: 'payment.updated',
+        payloadEncrypted: encryptPii(rawPayload),
+        payloadHash: null,
+        signatureValid: true,
+      },
+    });
+
+    const result = await claimWebhookEvent(db, {
+      provider,
+      providerEventId: 'legacy-1',
+      eventType: 'payment.updated',
+      rawPayload,
+      payloadEncrypted: encryptPii(rawPayload),
+    });
+    expect(result.status).toBe('claimed');
+
+    const stored = await db.webhookEvent.findUnique({
+      where: { provider_providerEventId: { provider, providerEventId: 'legacy-1' } },
+    });
+    expect(stored?.payloadHash).toBe(createHash('sha256').update(rawPayload).digest('hex'));
+  });
+
+  it('rejects a legacy row when its incoming payload differs from the encrypted original', async () => {
+    const originalPayload = '{"id":"legacy-conflict-1","amount":10}';
+    await db.webhookEvent.create({
+      data: {
+        provider,
+        providerEventId: 'legacy-conflict-1',
+        eventType: 'payment.updated',
+        payloadEncrypted: encryptPii(originalPayload),
+        payloadHash: null,
+        signatureValid: true,
+      },
+    });
+
+    await expect(claimWebhookEvent(db, {
+      provider,
+      providerEventId: 'legacy-conflict-1',
+      eventType: 'payment.updated',
+      rawPayload: '{"id":"legacy-conflict-1","amount":1000}',
+      payloadEncrypted: encryptPii('{"id":"legacy-conflict-1","amount":1000}'),
+    })).rejects.toThrow('webhook_event_payload_conflict');
+  });
+
+  it('prevents an expired worker from completing a lease reclaimed by another worker', async () => {
+    const input = { provider, providerEventId: 'fenced-lease-1', eventType: 'payment.updated', rawPayload: '{"id":"fenced-lease-1"}', payloadEncrypted: encrypted };
+    const firstNow = new Date('2026-01-01T00:00:00Z');
+    const first = await claimWebhookEvent(db, input, firstNow);
+    if (first.status !== 'claimed') throw new Error('expected initial claim');
+
+    const second = await claimWebhookEvent(db, input, new Date(firstNow.getTime() + 120_000));
+    if (second.status !== 'claimed') throw new Error('expected reclaimed lease');
+
+    await expect(completeWebhookEvent(db, first.eventId, first.token)).rejects.toThrow('webhook_processing_lease_lost');
+    await expect(completeWebhookEvent(db, second.eventId, second.token)).resolves.toBeUndefined();
   });
 });
