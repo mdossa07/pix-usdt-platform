@@ -40,5 +40,11 @@ jobs:
       - name: Prepare integration database
         run: pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run financial integration scenarios
-        run: pnpm --filter @pixsplit/api exec vitest run src/payments/orchestrator.e2e.test.ts src/security/hmac-auth.test.ts
+        run: pnpm --filter @pixsplit/api exec vitest run src/payments/orchestrator.e2e.test.ts
+      - name: Prepare isolated HMAC integration schema
+        run: |
+          pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS hmac_test;'
+          DATABASE_URL="${DATABASE_URL%schema=public}schema=hmac_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
+      - name: Run merchant HMAC integration scenarios
+        run: pnpm --filter @pixsplit/api exec vitest run src/security/hmac-auth.test.ts
       - run: pnpm build
