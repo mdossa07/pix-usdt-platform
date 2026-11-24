@@ -9,13 +9,13 @@ let userId = '';
 let merchantId = '';
 let walletId = '';
 
-async function createInput(idempotencyKey: string, amountBrlCents = 5_000) {
+async function createInput(idempotencyKey: string, amountBrlCents = 5_000, commissionBps = 200) {
   return {
     merchantId,
     actorUserId: userId,
     walletDestinationId: walletId,
     amountBrlCents,
-    commissionBps: 200,
+    commissionBps,
     description: 'Integration test payment',
     idempotencyKey,
     ipAddress: '127.0.0.1',
@@ -98,6 +98,10 @@ describe('idempotent payment creation', () => {
       return result.response;
     });
     expect(new Set(responses.map(response => response.id)).size).toBe(1);
+    expect(responses[0].status).toBe('PIX_PENDING');
+    const savedPayment = await prisma.payment.findUniqueOrThrow({ where: { id: responses[0].id } });
+    expect(savedPayment.status).toBe('PIX_PENDING');
+    expect(savedPayment.commissionBps).toBe(200);
     expect(await prisma.payment.count({ where: { merchantId } })).toBe(1);
     expect(await prisma.idempotencyRecord.count({
       where: { scope: `merchant:POST:/v1/payments:${merchantId}`, key },
