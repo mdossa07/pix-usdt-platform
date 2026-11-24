@@ -116,7 +116,7 @@ app.get('/v1/me', { preHandler: app.authenticate }, async (request, reply) => {
 app.get('/v1/wallets', { preHandler: app.authenticate }, async (request) => {
   const merchant = await merchantFor(request);
   const wallets = await prisma.walletDestination.findMany({ where: { merchantId: merchant.id }, orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }] });
-  return wallets.map(w => ({ id: w.id, label: w.label, exchangeName: w.exchangeName, networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), address: decryptPii(w.addressEncrypted), tag: w.tagEncrypted ? decryptPii(w.tagEncrypted) : null, walletType: w.walletType, status: w.status, holderName: w.holderName, holderCountry: w.holderCountry, isDefault: w.isDefault, createdAt: w.createdAt }));
+  return wallets.map(w => ({ id: w.id, label: w.label, exchangeName: w.exchangeName, networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), address: `${decryptPii(w.addressEncrypted).slice(0, 6)}…${w.addressLast8}`, hasTag: Boolean(w.tagEncrypted), walletType: w.walletType, status: w.status, holderName: w.holderName, holderCountry: w.holderCountry, isDefault: w.isDefault, createdAt: w.createdAt }));
 });
 
 app.post('/v1/wallets', { preHandler: app.authenticate }, async (request, reply) => {
@@ -207,7 +207,7 @@ app.get('/v1/admin/dashboard', { preHandler: app.authenticate }, async (request,
 app.get('/v1/admin/commission-wallets', { preHandler: app.authenticate }, async (request, reply) => {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'admin_only' });
   const wallets = await prisma.platformWallet.findMany({ orderBy: { networkCode: 'asc' } });
-  return wallets.map(w => ({ networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), address: decryptPii(w.addressEncrypted), addressLast8: w.addressLast8, isEnabled: w.isEnabled }));
+  return wallets.map(w => ({ networkCode: w.networkCode, currencySymbol: w.currencySymbol.toUpperCase(), addressLast8: w.addressLast8, isEnabled: w.isEnabled }));
 });
 
 app.post('/v1/admin/commission-wallets', { preHandler: app.authenticate }, async (request, reply) => {
