@@ -220,7 +220,7 @@ export async function generateMerchantApiKey(
 }
 
 /**
- * HMAC-SHA256(secret, METHOD\nPATH\nTIMESTAMP\nRAW_BODY), lower-case hex.
+ * HMAC-SHA256(secret, METHOD\nPATH\nTIMESTAMP\nNONCE\nRAW_BODY), lower-case hex.
  * merchantId remains in the helper signature for backwards-compatible SDK calls;
  * the key ID selects the merchant-scoped secret on the server.
  */
@@ -231,9 +231,8 @@ export function signRequest(
   path: string,
   timestamp: number,
   rawBody: string,
-  nonce = randomBytes(24).toString('hex'),
+  nonce: string,
 ): string {
-  const nonce = randomBytes(24).toString('hex');
   const signingString = buildSigningString(method, path, String(timestamp), rawBody, nonce);
   return createHmac('sha256', secret).update(signingString).digest('hex');
 }
