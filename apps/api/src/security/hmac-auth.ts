@@ -1,6 +1,6 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { decryptPii, encryptPii } from './crypto.js';
 
 const defaultPrisma = new PrismaClient();
@@ -19,6 +19,7 @@ declare module 'fastify' {
 const SIGNATURE_HEADER = 'x-pixsplit-signature';
 const TIMESTAMP_HEADER = 'x-pixsplit-timestamp';
 const KEY_ID_HEADER = 'x-pixsplit-key-id';
+const NONCE_HEADER = 'x-pixsplit-nonce';
 const MAX_SKEW_MS = 5 * 60 * 1000; // 5 minutos
 
 /**
@@ -31,8 +32,9 @@ function buildSigningString(
   path: string,
   timestamp: string,
   body: string,
+  nonce: string,
 ): string {
-  return `${method.toUpperCase()}\n${path}\n${timestamp}\n${body}`;
+  return `${method.toUpperCase()}\n${path}\n${timestamp}\n${nonce}\n${body}`;
 }
 
 function safeCompare(a: Buffer, b: Buffer): boolean {
@@ -56,13 +58,20 @@ export function createHmacAuthMiddleware(db: PrismaClient) {
     const keyId = request.headers[KEY_ID_HEADER];
     const signature = request.headers[SIGNATURE_HEADER];
     const timestamp = request.headers[TIMESTAMP_HEADER];
+    const nonce = request.headers[NONCE_HEADER];
 
     if (
       typeof keyId !== 'string'
       || typeof signature !== 'string'
       || typeof timestamp !== 'string'
+      || typeof nonce !== 'string'
     ) {
       void reply.code(401).send({ error: 'Missing authentication headers' });
+      return;
+    }
+
+    if (!/^[a-f0-9]{32,128}$/i.test(nonce)) {
+      void reply.code(401).send({ error: 'Invalid nonce' });
       return;
     }
 
@@ -130,13 +139,36 @@ export function createHmacAuthMiddleware(db: PrismaClient) {
     const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
     const rawBody = raw ? raw.toString('utf8') : '';
     const path = request.url.split('?')[0] || '/';
-    const signingString = buildSigningString(request.method, path, timestamp, rawBody);
+    const signingString = buildSigningString(request.method, path, timestamp, rawBody, nonce);
     const expectedSig = createHmac('sha256', signingSecret).update(signingString).digest();
     const receivedSig = Buffer.from(signature, 'hex');
 
     if (!safeCompare(receivedSig, expectedSig)) {
       void reply.code(401).send({ error: 'Invalid signature' });
       return;
+    }
+
+    // Atomically consume each signed nonce. A unique database constraint makes
+    // concurrent replays fail even when they reach different API instances.
+    const nonceScope = `merchant-hmac:${apiKey.id}`;
+    try {
+      await db.idempotencyRecord.deleteMany({
+        where: { scope: nonceScope, expiresAt: { lt: new Date(now) } },
+      });
+      await db.idempotencyRecord.create({
+        data: {
+          scope: nonceScope,
+          key: nonce.toLowerCase(),
+          requestHash: createHash('sha256').update(signingString).digest('hex'),
+          expiresAt: new Date(now + MAX_SKEW_MS * 2),
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        void reply.code(409).send({ error: 'request_replayed' });
+        return;
+      }
+      throw error;
     }
 
     // Update lastUsedAt asynchronously (non-blocking).
@@ -199,7 +231,13 @@ export function signRequest(
   path: string,
   timestamp: number,
   rawBody: string,
+  nonce = randomBytes(24).toString('hex'),
 ): string {
-  const signingString = buildSigningString(method, path, String(timestamp), rawBody);
+  const nonce = randomBytes(24).toString('hex');
+  const signingString = buildSigningString(method, path, String(timestamp), rawBody, nonce);
   return createHmac('sha256', secret).update(signingString).digest('hex');
+}
+
+export function createRequestNonce(): string {
+  return randomBytes(24).toString('hex');
 }
