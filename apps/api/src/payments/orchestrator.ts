@@ -133,14 +133,15 @@ export class PaymentOrchestrator {
     }
 
     // Recovery: if we have a provider ID but local status is stale/unknown, query provider first
-    if (existing?.providerWithdrawalSn && this.provider.getTransferStatus) {
+    const currentAttempt = existing;
+    if (currentAttempt?.providerWithdrawalSn && this.provider.getTransferStatus) {
       try {
-        const remoteStatus = await this.provider.getTransferStatus(existing.providerWithdrawalSn, existing.idempotencyKey);
+        const remoteStatus = await this.provider.getTransferStatus(currentAttempt.providerWithdrawalSn, currentAttempt.idempotencyKey);
         if (remoteStatus?.status === 'COMPLETED') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
-              where: { id: existing.id },
-              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? existing.txHash },
+              where: { id: currentAttempt.id },
+              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? currentAttempt.txHash },
             });
             await tx.payment.update({
               where: { id: paymentId },
@@ -154,14 +155,14 @@ export class PaymentOrchestrator {
           // The provider has confirmed a terminal failure. Preserve this attempt
           // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
             await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.FAILED } });
           });
-          existing = { ...existing, status: TransferStatus.FAILED };
+          existing = { ...currentAttempt, status: TransferStatus.FAILED };
         }
         if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
             await tx.payment.update({ where: { id: paymentId }, data: { merchantTransferStatus: TransferStatus.PROCESSING } });
           });
           return;
@@ -269,14 +270,15 @@ export class PaymentOrchestrator {
     }
 
     // Recovery: query provider before retrying
-    if (existing?.providerWithdrawalSn && this.provider.getTransferStatus) {
+    const currentAttempt = existing;
+    if (currentAttempt?.providerWithdrawalSn && this.provider.getTransferStatus) {
       try {
-        const remoteStatus = await this.provider.getTransferStatus(existing.providerWithdrawalSn, existing.idempotencyKey);
+        const remoteStatus = await this.provider.getTransferStatus(currentAttempt.providerWithdrawalSn, currentAttempt.idempotencyKey);
         if (remoteStatus?.status === 'COMPLETED') {
           await this.prisma.$transaction(async (tx) => {
             await tx.transfer.update({
-              where: { id: existing.id },
-              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? existing.txHash },
+              where: { id: currentAttempt.id },
+              data: { status: TransferStatus.COMPLETED, txHash: remoteStatus.txHash ?? currentAttempt.txHash },
             });
             await tx.payment.update({
               where: { id: paymentId },
@@ -290,14 +292,14 @@ export class PaymentOrchestrator {
           // The provider has confirmed a terminal failure. Preserve this attempt
           // and allow a fresh, separately idempotent attempt below.
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.FAILED } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.FAILED } });
             await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.FAILED } });
           });
-          existing = { ...existing, status: TransferStatus.FAILED };
+          existing = { ...currentAttempt, status: TransferStatus.FAILED };
         }
         if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: existing.id }, data: { status: TransferStatus.PROCESSING } });
+            await tx.transfer.update({ where: { id: currentAttempt.id }, data: { status: TransferStatus.PROCESSING } });
             await tx.payment.update({ where: { id: paymentId }, data: { platformTransferStatus: TransferStatus.PROCESSING } });
           });
           return;
