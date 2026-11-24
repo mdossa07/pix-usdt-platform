@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { decryptPii } from '../security/crypto.js';
 
 const LEASE_MS = 60_000;
 
@@ -51,9 +52,34 @@ export async function claimWebhookEvent(
     duplicate = true;
   }
 
+  // Rows created before payload fingerprints were introduced must be verified
+  // against their encrypted original body before they can be claimed or acked.
+  // If decryption fails, fail closed: never trust an unverifiable legacy event.
+  if (!event.payloadHash) {
+    let originalPayload: string;
+    try {
+      originalPayload = decryptPii(event.payloadEncrypted);
+    } catch {
+      throw new Error('webhook_event_payload_conflict');
+    }
+
+    const originalHash = createHash('sha256').update(originalPayload).digest('hex');
+    if (originalHash !== payloadHash) {
+      throw new Error('webhook_event_payload_conflict');
+    }
+
+    // Multiple retries may race to backfill the same legacy row. The guarded
+    // update preserves whichever matching hash was first written.
+    await db.webhookEvent.updateMany({
+      where: { id: event.id, payloadHash: null },
+      data: { payloadHash: originalHash },
+    });
+    event = await db.webhookEvent.findUniqueOrThrow({ where: { id: event.id } });
+  }
+
   // A provider event ID must identify one immutable payload. Never process a
   // second body under the same ID, even if its signature is independently valid.
-  if (event.payloadHash && event.payloadHash !== payloadHash) {
+  if (event.payloadHash !== payloadHash) {
     throw new Error('webhook_event_payload_conflict');
   }
 
