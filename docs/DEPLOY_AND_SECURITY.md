@@ -42,8 +42,8 @@ pnpm dev                      # Start API + Web in watch mode
 
 ## Security Hardening
 - **PII Encryption**: All sensitive fields (wallet addresses, tax IDs) encrypted with AES-256-GCM before storage.
-- **HMAC Auth**: Merchant API requests use HMAC-SHA256 with the original random secret; the database stores a SHA-256 consistency hash plus an AES-256-GCM encrypted copy. A database-only disclosure of `keyHash` cannot forge signatures. Timestamp validation rejects stale requests; it is not a complete replay defense inside the five-minute window, so merchant integrations must use stable external IDs and the API must enforce idempotency.
-- **Webhook Signature**: Verified against raw body using constant-time comparison.
+- **HMAC Auth**: Merchant API requests use HMAC-SHA256 with an encrypted random secret, a separate database verifier, a timestamp and a cryptographically random per-request nonce. The canonical payload includes method, path, timestamp, nonce and raw body. Nonces are consumed atomically; a replay is rejected.
+- **Webhook Signature**: Verified against raw body using constant-time comparison. Authenticated events are fingerprinted, atomically claimed with a recoverable PostgreSQL lease, and only marked complete after successful processing. Unresolved events release the claim and return HTTP 503 with `Retry-After` so the provider can retry.
 - **Rate Limiting**: IP-based on public routes; identity-based on authenticated routes.
 - **CORS**: Restricted to known frontend origins in production.
 - **Secrets**: Never logged, never returned in API responses, never committed to git.
@@ -68,4 +68,9 @@ pnpm dev                      # Start API + Web in watch mode
 - **Webhook Retries**: Foxbit retries webhooks up to 3 times; our idempotency handles duplicates safely.
 ## Merchant API key storage change
 
-The current schema adds nullable `MerchantApiKey.signingSecretEncrypted`. Deploy the schema change before deploying the new API code. Existing key rows without this value are intentionally rejected with `api_key_rotation_required`; merchants must create replacement keys and update their integrations, then revoke the old keys. Keep `PII_ENCRYPTION_KEY` in a separate secret manager and back it up securely: losing it makes encrypted API signing secrets and other encrypted personal data unrecoverable. Do not reuse the database backup as the only copy of this key.
+The schema includes nullable `MerchantApiKey.signingSecretEncrypted` and webhook payload/lease fields. Apply committed migrations with `pnpm --filter @pixsplit/api exec prisma migrate deploy --schema prisma/schema.prisma` before deploying the API code. Existing key rows without this value are intentionally rejected with `api_key_rotation_required`; merchants must create replacement keys and update their integrations, then revoke the old keys. Keep `PII_ENCRYPTION_KEY` in a separate secret manager and back it up securely: losing it makes encrypted API signing secrets and other encrypted personal data unrecoverable. Do not reuse the database backup as the only copy of this key.
+
+
+## Provider webhook event recovery
+
+Foxbit and TransFi events are keyed by provider plus provider event ID. The API stores a SHA-256 fingerprint of the authenticated raw payload and rejects a different payload under an already-used event ID. A PostgreSQL lease prevents concurrent workers from applying the same event; abandoned leases can be reclaimed after 60 seconds. Events are marked processed only after the payment transition and settlement enqueue complete. If an event cannot be matched or processed, the API returns HTTP 503 with a 30-second Retry-After and releases its claim. Confirm each provider's retry behavior and sandbox policy before enabling live payments.
