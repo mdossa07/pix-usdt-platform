@@ -70,6 +70,7 @@ function isPublicIpv6(address: string): boolean {
   // loopback, unique-local, link-local, multicast and IPv4-compatible ranges.
   if (!matchesIpv6Prefix(value, 0x1n, 3)) return false;
   if (matchesIpv6Prefix(value, 0x20010db8n, 32)) return false; // documentation
+  if (matchesIpv6Prefix(value, 0x3fff0n, 20)) return false; // documentation
   if (matchesIpv6Prefix(value, 0x100080n, 23)) return false; // protocol assignments
   if (matchesIpv6Prefix(value, 0x2002n, 16)) return false; // 6to4
   if (matchesIpv6Prefix(value, 0x64ff9bn, 48)) return false; // NAT64 well-known prefix
