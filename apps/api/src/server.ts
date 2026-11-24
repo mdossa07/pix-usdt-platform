@@ -252,6 +252,9 @@ app.post('/v1/payments', { preHandler: app.authenticate }, async (request, reply
 
 // --- Public Checkout Endpoint (no auth, read-only) ---
 app.get('/v1/checkout/:externalId', async (request, reply) => {
+  if (!mockFinancialExecutionEnabled) {
+    return reply.code(503).send({ error: 'checkout_disabled', message: 'Checkout indisponível até a homologação do fluxo de pagamento.' });
+  }
   const { externalId } = request.params as { externalId: string };
   const payment = await prisma.payment.findFirst({
     where: { externalId },
