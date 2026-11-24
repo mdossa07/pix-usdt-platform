@@ -15,6 +15,7 @@ import { handleFoxbitWebhookEvent } from './providers/foxbit/foxbit-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
+import { createPaymentProvider } from './providers/provider-factory.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -473,11 +474,10 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
     });
   }
 
-  // Real provider flow: create charge via Foxbit Partner API v3 Fiat Gateway
+  // Real provider flow: create charge via configured payment provider (Foxbit or TransFi).
   // In mock mode, the adapter returns simulated but structurally valid data.
-  // In sandbox/live, it makes real HTTP calls to Foxbit.
-  const { FoxbitAdapter } = await import('./providers/foxbit/foxbit-adapter.js');
-  const adapter = new FoxbitAdapter(config.PAYMENTS_MODE);
+  // In sandbox/live, it makes real HTTP calls to the configured provider.
+  const adapter = createPaymentProvider();
 
   const destWallet = await prisma.walletDestination.findUniqueOrThrow({ where: { id: walletDestinationId } });
   const charge = await adapter.createPixCharge({

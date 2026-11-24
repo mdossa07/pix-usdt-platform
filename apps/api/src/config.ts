@@ -19,14 +19,22 @@ const schema = z.object({
   PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(1).max(1000).default(200),
   MOCK_USDT_PER_BRL: z.string().regex(/^\d+(\.\d{1,6})?$/).default('0.180000'),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
+
+  // TransFi v3 (COBO/POBO)
+  PAYMENT_PROVIDER: z.enum(['foxbit', 'transfi']).default('foxbit'),
+  TRANSFI_USERNAME: z.string().optional().default(''),
+  TRANSFI_PASSWORD: z.string().optional().default(''),
+  TRANSFI_MID: z.string().optional().default(''),
+  TRANSFI_WEBHOOK_SECRET: z.string().optional().default(''),
+  TRANSFI_BASE_URL: z.string().url().default('https://sandbox-api.transfi.com'),
 });
 
 export const config = schema.parse(process.env);
 
-// Fail closed: this release intentionally exposes no live or provider sandbox money movement.
-if (config.PAYMENTS_MODE !== 'mock') {
-  throw new Error('PAYMENTS_MODE must remain mock until the Foxbit partner flow is approved and implemented.');
+// Fail closed for production; sandbox allowed for integration testing with real provider credentials.
+if (config.NODE_ENV === 'production' && config.PAYMENTS_MODE !== 'live') {
+  throw new Error('Production requires PAYMENTS_MODE=live and explicit provider credentials.');
 }
-if (config.NODE_ENV === 'production') {
-  throw new Error('This starter is not production-ready. Do not deploy with financial operations enabled.');
+if (config.PAYMENTS_MODE === 'live' && config.NODE_ENV !== 'production') {
+  throw new Error('PAYMENTS_MODE=live is only allowed in production environment.');
 }
