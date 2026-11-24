@@ -36,12 +36,27 @@ await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, 
 app.decorate('authenticate', async (request, reply) => {
   try {
     await request.jwtVerify();
-    if ((request.user as { purpose?: string }).purpose === 'admin-2fa-challenge') {
-      await reply.code(401).send({ error: 'two_factor_required' });
-    }
   } catch {
     await reply.code(401).send({ error: 'unauthorized' });
+    return;
   }
+
+  if ((request.user as { purpose?: string }).purpose === 'admin-2fa-challenge') {
+    await reply.code(401).send({ error: 'two_factor_required' });
+    return;
+  }
+
+  const currentUser = await prisma.user.findUnique({
+    where: { id: request.user.sub },
+    select: { isActive: true, role: true },
+  });
+  if (!currentUser?.isActive) {
+    await reply.code(401).send({ error: 'unauthorized' });
+    return;
+  }
+
+  // Reflect role changes immediately instead of trusting a stale JWT role.
+  request.user.role = currentUser.role;
 });
 
 function userId(request: FastifyRequest) { return request.user.sub; }
