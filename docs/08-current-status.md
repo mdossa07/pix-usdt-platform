@@ -18,7 +18,9 @@
 - TOTP RFC 6238 e dez códigos de recuperação independentes, armazenados apenas como hashes; o login desafia o segundo fator quando ele está habilitado.
 - Obrigatoriedade de MFA para superadministradores integrada no PR #14: sem matrícula TOTP, o superadmin só acessa status/configuração/ativação; após ativação, toda rota administrativa exige sessão verificada por MFA. CI da branch aprovada; merge commit `5191d19`.
 - O middleware revalida usuário ativo e papel atual no PostgreSQL em cada rota autenticada.
-- O logout limpa o cookie de navegador. O JWT é stateless e tem validade de duas horas; ainda não há revogação individual centralizada por JTI/sessão.
+- Sessões de navegador persistidas em `AuthSession` no PostgreSQL, com JTI único, expiração, metadados limitados e revogação centralizada; JWTs sem sessão ativa são rejeitados em cada requisição autenticada.
+- Logout revoga a sessão atual antes de limpar o cookie; o usuário pode listar até 25 sessões ativas, revogar uma sessão específica e encerrar todas as sessões. As operações são registradas na auditoria.
+- O JWT tem validade de duas horas e a sessão no banco compartilha o mesmo prazo. JWTs anteriores à migração não possuem JTI persistido e deixam de ser aceitos após o rollout; exigir novo login.
 
 ### Pagamentos e segurança financeira
 - Criação de pagamentos em modo de demonstração, com código explícito `MOCK-PIX-NOT-PAYABLE`.
@@ -63,7 +65,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
 - Webhooks de saída seguros para sistemas dos comerciantes ainda não foram implementados.
 - TOTP agora é obrigatório para superadministradores; ainda falta documentar um processo multi-pessoa de break-glass.
-- Faltam revogação centralizada por sessão/JTI, teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo e revisão jurídica/regulatória/fiscal.
+- Faltam teste E2E de navegador, observabilidade/alertas, runbooks, pentest externo, processo multi-pessoa de break-glass e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
 
 ## Próximas etapas
