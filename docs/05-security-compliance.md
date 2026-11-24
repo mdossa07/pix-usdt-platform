@@ -18,7 +18,7 @@ A empresa não deve receber, custodiar, converter ou transferir recursos de terc
 
 ## Segundo fator administrativo
 
-- Superadministradores podem habilitar TOTP no painel, usando qualquer aplicativo autenticador compatível com RFC 6238.
+- Superadministradores podem habilitar TOTP no painel, usando qualquer aplicativo autenticador compatível com RFC 6238; o início/reinício da configuração exige reautenticação com a senha atual.
 - O segredo de 160 bits é cifrado com AES-256-GCM antes de ser persistido. O status administrativo nunca devolve o segredo.
 - O login exige senha e, quando TOTP estiver ativo, um desafio de cinco minutos mais código de seis dígitos.
 - O código validado é consumido atomicamente no PostgreSQL; o mesmo passo não pode autenticar duas tentativas.
