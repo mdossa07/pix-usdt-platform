@@ -64,4 +64,10 @@ jobs:
           DATABASE_URL="${DATABASE_URL%schema=public}schema=webhook_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run webhook claim integration scenarios
         run: DATABASE_URL="${DATABASE_URL%schema=public}schema=webhook_test" pnpm --filter @pixsplit/api exec vitest run src/webhooks/event-claim.test.ts
+      - name: Prepare isolated admin TOTP recovery schema
+        run: |
+          pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS admin_totp_test;'
+          DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
+      - name: Run admin TOTP recovery integration scenarios
+        run: DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec vitest run src/security/two-factor-recovery.e2e.test.ts
       - run: pnpm build
