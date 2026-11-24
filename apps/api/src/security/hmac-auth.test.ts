@@ -44,7 +44,7 @@ describe('HMAC Authentication', () => {
     app = Fastify();
     await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
     app.addHook('preHandler', createHmacAuthMiddleware(prisma));
-    app.post('/test', async (request) => ({ ok: true, merchantId: request.merchant?.merchantId }));
+    app.post('/test', { config: { rawBody: true } }, async (request) => ({ ok: true, merchantId: request.merchant?.merchantId }));
     await app.ready();
   });
 
