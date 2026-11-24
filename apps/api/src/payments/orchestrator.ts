@@ -1,4 +1,5 @@
 import { transferAttemptIdempotencyKey } from './transfer-attempt.js';
+import { derivePaymentAggregateStatus } from './payment-status.js';
 import { PrismaClient, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
@@ -507,65 +508,26 @@ export class PaymentOrchestrator {
    */
   private async syncPaymentGlobalStatus(paymentId: string): Promise<void> {
     const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    const merchant = payment.merchantTransferStatus;
-    const platform = payment.platformTransferStatus;
+    const status = derivePaymentAggregateStatus(
+      payment.merchantTransferStatus,
+      payment.platformTransferStatus,
+    );
+    const data: {
+      status: PaymentStatus;
+      completedAt?: Date;
+      failureCode?: string | null;
+      failureMessage?: string | null;
+    } = { status };
 
-    if (merchant === TransferStatus.COMPLETED && platform === TransferStatus.COMPLETED) {
-      await this.prisma.payment.update({
-        where: { id: paymentId },
-        data: { status: PaymentStatus.COMPLETED, completedAt: new Date() },
-      });
-      return;
+    if (status === PaymentStatus.COMPLETED) {
+      data.completedAt = payment.completedAt ?? new Date();
+      data.failureCode = null;
+      data.failureMessage = null;
+    } else if (status === PaymentStatus.UNDER_REVIEW) {
+      data.failureCode = payment.failureCode ?? 'PAYOUT_REQUIRES_REVIEW';
+      data.failureMessage = payment.failureMessage ?? 'A payout leg requires reconciliation before this payment can complete.';
     }
 
-    if (merchant === TransferStatus.FAILED || platform === TransferStatus.FAILED) {
-      await this.prisma.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: PaymentStatus.UNDER_REVIEW,
-          failureCode: 'PAYOUT_LEG_REQUIRES_REVIEW',
-          failureMessage: payment.failureMessage ?? 'At least one payout leg has a confirmed terminal failure and requires reconciliation.',
-        },
-      });
-      return;
-    }
-
-    // SUBMITTED is a durable local claim with no confirmed provider outcome.
-    // It is not a normal pending transfer and must be visibly held for reconciliation.
-    if (
-      merchant === TransferStatus.SUBMITTED || merchant === TransferStatus.CREATED
-      || platform === TransferStatus.SUBMITTED || platform === TransferStatus.CREATED
-    ) {
-      await this.prisma.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: PaymentStatus.UNDER_REVIEW,
-          failureCode: 'PAYOUT_OUTCOME_UNKNOWN',
-          failureMessage: payment.failureMessage ?? 'A payout was submitted but its provider outcome is not yet confirmed.',
-        },
-      });
-      return;
-    }
-
-    if (merchant === TransferStatus.COMPLETED && platform !== TransferStatus.COMPLETED) {
-      await this.prisma.payment.update({
-        where: { id: paymentId },
-        data: { status: PaymentStatus.PLATFORM_PAYOUT_PENDING },
-      });
-      return;
-    }
-
-    if (platform === TransferStatus.COMPLETED && merchant !== TransferStatus.COMPLETED) {
-      await this.prisma.payment.update({
-        where: { id: paymentId },
-        data: { status: PaymentStatus.MERCHANT_PAYOUT_PENDING },
-      });
-      return;
-    }
-
-    await this.prisma.payment.update({
-      where: { id: paymentId },
-      data: { status: PaymentStatus.COMMISSION_TRANSFER_PENDING },
-    });
+    await this.prisma.payment.update({ where: { id: paymentId }, data });
   }
 }
