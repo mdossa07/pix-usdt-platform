@@ -345,7 +345,7 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
       data: {
         provider: 'TRANSFI',
         providerEventId: payload.eventId,
-        eventType: payload.entityType,
+        eventType: payload.entityType ?? 'unknown',
         payloadEncrypted: encryptPii(raw.toString('utf8')),
         signatureValid: true,
       },
