@@ -104,6 +104,7 @@ export default function AdminDashboard() {
   const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [adminDataRefresh, setAdminDataRefresh] = useState(0);
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('pixsplit_authenticated') : null;
 
@@ -148,7 +149,7 @@ export default function AdminDashboard() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar dados');
       })
       .finally(() => setLoading(false));
-  }, [token, twoFactorStatus?.enabled]);
+  }, [token, adminDataRefresh]);
 
   if (!token) return <div className="text-slate-500 p-8">Redirecionando para o acesso seguro…</div>;
   if (error) return <div className="text-red-700 p-8">{error}</div>;
@@ -274,14 +275,19 @@ export default function AdminDashboard() {
     setTwoFactorBusy(true);
     setTwoFactorNotice(null);
     try {
-      const enabled = await apiRequest<{ recoveryCodes: string[]; csrfToken: string }>('/v1/admin/2fa/enable', {
+      const enabled = await apiRequest<{ enabledAt: string; recoveryCodes: string[]; csrfToken: string }>('/v1/admin/2fa/enable', {
         method: 'POST',
         body: JSON.stringify({ code: twoFactorCode }),
       }, token);
       sessionStorage.setItem('pixsplit_csrf', enabled.csrfToken);
       setTwoFactorRecoveryCodes(enabled.recoveryCodes);
-      const status = await apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token);
-      setTwoFactorStatus(status);
+      setTwoFactorStatus({
+        enabled: true,
+        enabledAt: enabled.enabledAt,
+        setupPending: false,
+        recoveryCodesRemaining: enabled.recoveryCodes.length,
+      });
+      setAdminDataRefresh(value => value + 1);
       setTwoFactorSetup(null);
       setTwoFactorCode('');
       setTwoFactorNotice('Autenticação de dois fatores ativada. No próximo acesso será solicitado o código do aplicativo.');
