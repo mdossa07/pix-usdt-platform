@@ -31,9 +31,18 @@ export async function consumeRecoveryCode(
 ): Promise<boolean> {
   if (!isRecoveryCode(value)) return false;
   const codeHash = hashRecoveryCode(value);
-  const consumed = await db.userTwoFactorRecoveryCode.updateMany({
-    where: { userId, codeHash, usedAt: null },
-    data: { usedAt },
+  return db.$transaction(async (tx) => {
+    const consumed = await tx.userTwoFactorRecoveryCode.updateMany({
+      where: { userId, codeHash, usedAt: null },
+      data: { usedAt },
+    });
+    if (consumed.count !== 1) return false;
+
+    const loginUpdated = await tx.user.updateMany({
+      where: { id: userId, isActive: true, role: 'SUPER_ADMIN', twoFactorEnabledAt: { not: null } },
+      data: { lastLoginAt: usedAt },
+    });
+    if (loginUpdated.count !== 1) throw new Error('admin_account_not_eligible_for_recovery_login');
+    return true;
   });
-  return consumed.count === 1;
 }
