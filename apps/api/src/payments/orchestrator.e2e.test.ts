@@ -66,13 +66,13 @@ class MockProvider implements PaymentProvider {
     };
   }
 
-  async getTransferStatus(providerWithdrawalSn: string, _idempotencyKey: string): Promise<TransferStatusResult | null> {
+  async getTransferStatus(providerWithdrawalSn: string | null, idempotencyKey: string): Promise<TransferStatusResult | null> {
     this.callLog.push({ method: 'getTransferStatus', args: [providerWithdrawalSn, _idempotencyKey] });
-    if (providerWithdrawalSn.includes('merchant') && this.merchantCompletedRemotely) {
-      return { status: 'COMPLETED', txHash: '0xrecovered_merchant_hash' };
+    if ((providerWithdrawalSn?.includes('merchant') || idempotencyKey.includes(':merchant:')) && this.merchantCompletedRemotely) {
+      return { status: 'COMPLETED', txHash: '0xrecovered_merchant_hash', providerReference: providerWithdrawalSn ?? 'merchant-recovered-by-partner-id' };
     }
-    if (providerWithdrawalSn.includes('platform') && this.platformCompletedRemotely) {
-      return { status: 'COMPLETED', txHash: '0xrecovered_platform_hash' };
+    if ((providerWithdrawalSn?.includes('platform') || idempotencyKey.includes(':platform:')) && this.platformCompletedRemotely) {
+      return { status: 'COMPLETED', txHash: '0xrecovered_platform_hash', providerReference: providerWithdrawalSn ?? 'platform-recovered-by-partner-id' };
     }
     return { status: 'PENDING' };
   }
@@ -371,6 +371,54 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     expect(updated.transfers).toHaveLength(2);
     expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(1);
     expect(provider.callLog.filter((entry) => entry.method === 'settlePlatformCommission')).toHaveLength(1);
+  });
+
+
+  it('Scenario I: Recover a payout accepted remotely when the provider order ID was never persisted', async () => {
+    const payment = await prisma.payment.create({
+      data: {
+        externalId: 'ext-i-partner-id-recovery',
+        merchantId: 'merch-1',
+        walletDestinationId: 'wallet-dest-1',
+        status: PaymentStatus.UNDER_REVIEW,
+        amountBrlCents: BigInt(50000),
+        providerGrossUsdt: '9090',
+        merchantNetUsdt: '8908',
+        commissionUsdt: '182',
+        fxRate: '5.5',
+        paidAt: new Date(),
+        merchantTransferStatus: TransferStatus.SUBMITTED,
+        platformTransferStatus: TransferStatus.COMPLETED,
+      },
+    });
+
+    await prisma.transfer.create({
+      data: {
+        id: 'transfer-i-merchant',
+        paymentId: payment.id,
+        kind: TransferKind.MERCHANT_PAYOUT,
+        amountUsdt: '8908',
+        networkCode: 'TRON',
+        destinationAddressEnc: 'enc:T9yD14Nj9j7xAB4dbGeiX9h8bNzyBvL3Qz',
+        providerWithdrawalSn: null,
+        idempotencyKey: `${payment.id}:merchant:v1`,
+        status: TransferStatus.SUBMITTED,
+      },
+    });
+
+    provider.merchantCompletedRemotely = true;
+    await orchestrator.settleMerchantPayout(payment.id);
+
+    const updated = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      include: { transfers: true },
+    });
+    const merchantTransfer = updated.transfers.find((t) => t.kind === TransferKind.MERCHANT_PAYOUT)!;
+    expect(merchantTransfer.status).toBe(TransferStatus.COMPLETED);
+    expect(merchantTransfer.providerWithdrawalSn).toBe('merchant-recovered-by-partner-id');
+    expect(updated.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
+    expect(updated.status).toBe(PaymentStatus.COMPLETED);
+    expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(0);
   });
 
   it('Scenario G: Small value rounding — floor preserves conservation', async () => {
