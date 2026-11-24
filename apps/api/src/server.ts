@@ -333,7 +333,7 @@ app.post('/v1/admin/2fa/recovery-codes/regenerate', {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const parsed = z.object({
     password: z.string().min(1).max(128),
-    code: z.string().regex(/^\\d{6}$/),
+    code: z.string().regex(/^\d{6}$/),
   }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_recovery_code_regeneration' });
 
