@@ -741,9 +741,15 @@ app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async
   if (payment.status !== PaymentStatus.PIX_PENDING) return reply.code(409).send({ error: 'payment_not_pending' });
   // This endpoint exists only in non-production mock environments. Transition the
   // payment first so the worker's PIX_CONFIRMED guard cannot silently drop the job.
-  const confirmed = await prisma.payment.updateMany({
-    where: { id, merchantId: merchant.id, status: PaymentStatus.PIX_PENDING },
-    data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+  const confirmed = await prisma.$transaction(async tx => {
+    const changed = await tx.payment.updateMany({
+      where: { id, merchantId: merchant.id, status: PaymentStatus.PIX_PENDING },
+      data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+    });
+    if (changed.count === 1) {
+      await createMerchantWebhookDeliveries(tx, id, 'payment.status_changed');
+    }
+    return changed;
   });
   if (confirmed.count !== 1) return reply.code(409).send({ error: 'payment_state_changed' });
   await enqueueSettlement(id, payment.amountBrlCents);
@@ -779,9 +785,15 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   if (event.data.type !== 'withdrawal' && event.data.purchase_id && state === 'PIX_CONFIRMED') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
-        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
+          data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       if (changed.count === 1) {
         await enqueueSettlement(payment.id, payment.amountBrlCents);
@@ -797,9 +809,15 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
   } else if (event.data.type !== 'withdrawal' && state === 'FAILED' && event.data.purchase_id) {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: event.data.purchase_id } });
     if (payment && foxbitOpenPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
-        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: foxbitOpenPaymentStatuses } },
+          data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'Foxbit reported that the PIX order failed before confirmation.' },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       processed = changed.count === 1;
     } else if (payment?.status === PaymentStatus.FAILED) processed = true;
@@ -846,9 +864,15 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
   if (payload.entityId && newState && payload.entityType === 'order' && payload.orderType === 'payin') {
     const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
     if (payment && newState === 'PAID' && openPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: openPaymentStatuses } },
-        data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: openPaymentStatuses } },
+          data: { status: PaymentStatus.PIX_CONFIRMED, paidAt: new Date() },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       if (changed.count === 1) {
         await enqueueSettlement(payment.id, payment.amountBrlCents);
@@ -861,9 +885,15 @@ app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, rep
     } else if (payment && newState === 'PAID' && postPaymentStatuses.includes(payment.status)) {
       processed = true;
     } else if (payment && newState === 'FAILED' && openPaymentStatuses.includes(payment.status)) {
-      const changed = await prisma.payment.updateMany({
-        where: { id: payment.id, status: { in: openPaymentStatuses } },
-        data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
+      const changed = await prisma.$transaction(async tx => {
+        const updated = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: openPaymentStatuses } },
+          data: { status: PaymentStatus.FAILED, failureCode: 'PROVIDER_ORDER_FAILED', failureMessage: 'The provider reported that the PIX order failed before confirmation.' },
+        });
+        if (updated.count === 1) {
+          await createMerchantWebhookDeliveries(tx, payment.id, 'payment.status_changed');
+        }
+        return updated;
       });
       processed = changed.count === 1;
     } else if (payment && newState === 'FAILED' && payment.status === PaymentStatus.FAILED) {
@@ -1382,23 +1412,27 @@ app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { 
   }, paymentExternalId);
 
   // Conversion and 98/2 split happen only after a verified PIX confirmation.
-  const payment = await prisma.payment.create({
-    data: {
-      merchantId: merchant.merchantId,
-      walletDestinationId,
-      externalId: paymentExternalId,
-      amountBrlCents: BigInt(amountBrlCents),
-      commissionBps: config.PLATFORM_COMMISSION_BPS,
-      status: PaymentStatus.PIX_PENDING,
-      providerOrderId: charge.providerChargeId,
-      pixQrCodeBase64: charge.qrCodeBase64 ?? null,
-      pixCopyPaste: charge.copyPaste,
-      expiresAt: charge.expiresAt,
-      payerName: payerName || null,
-      payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
-      payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
-      description: description || null,
-    },
+  const payment = await prisma.$transaction(async tx => {
+    const created = await tx.payment.create({
+      data: {
+        merchantId: merchant.merchantId,
+        walletDestinationId,
+        externalId: paymentExternalId,
+        amountBrlCents: BigInt(amountBrlCents),
+        commissionBps: config.PLATFORM_COMMISSION_BPS,
+        status: PaymentStatus.PIX_PENDING,
+        providerOrderId: charge.providerChargeId,
+        pixQrCodeBase64: charge.qrCodeBase64 ?? null,
+        pixCopyPaste: charge.copyPaste,
+        expiresAt: charge.expiresAt,
+        payerName: payerName || null,
+        payerTaxIdEncrypted: payerTaxId ? encryptPii(payerTaxId) : null,
+        payerTaxIdLast4: payerTaxId ? payerTaxId.slice(-4) : null,
+        description: description || null,
+      },
+    });
+    await createMerchantWebhookDeliveries(tx, created.id, 'payment.created');
+    return created;
   });
 
   // DO NOT enqueue settlement here. Settlement is triggered ONLY after
