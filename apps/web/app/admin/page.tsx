@@ -98,6 +98,7 @@ export default function AdminDashboard() {
   const [twoFactorSetup, setTwoFactorSetup] = useState<AdminTwoFactorSetup | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [twoFactorRecoveryCodes, setTwoFactorRecoveryCodes] = useState<string[] | null>(null);
+  const [twoFactorRegenerateOpen, setTwoFactorRegenerateOpen] = useState(false);
   const [twoFactorPassword, setTwoFactorPassword] = useState('');
   const [twoFactorBusy, setTwoFactorBusy] = useState(false);
   const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
@@ -280,6 +281,29 @@ export default function AdminDashboard() {
     }
   };
 
+  const regenerateTwoFactorRecoveryCodes = async () => {
+    if (!token || !twoFactorPassword || twoFactorCode.length !== 6) return;
+    setTwoFactorBusy(true);
+    setTwoFactorNotice(null);
+    try {
+      const result = await apiRequest<{ recoveryCodes: string[] }>('/v1/admin/2fa/recovery-codes/regenerate', {
+        method: 'POST',
+        body: JSON.stringify({ password: twoFactorPassword, code: twoFactorCode }),
+      }, token);
+      const status = await apiRequest<AdminTwoFactorStatus>('/v1/admin/2fa/status', {}, token);
+      setTwoFactorStatus(status);
+      setTwoFactorRecoveryCodes(result.recoveryCodes);
+      setTwoFactorPassword('');
+      setTwoFactorCode('');
+      setTwoFactorRegenerateOpen(false);
+      setTwoFactorNotice('Novos códigos gerados. Os códigos anteriores não utilizados foram invalidados.');
+    } catch (err) {
+      setTwoFactorNotice(err instanceof Error ? err.message : 'Não foi possível regenerar os códigos.');
+    } finally {
+      setTwoFactorBusy(false);
+    }
+  };
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Visão Geral' },
     { id: 'merchants', label: 'Comerciantes' },
@@ -333,16 +357,37 @@ export default function AdminDashboard() {
                 <div className="space-y-3">
                   <p className="text-sm text-slate-600">Segundo fator ativo desde {twoFactorStatus.enabledAt ? new Date(twoFactorStatus.enabledAt).toLocaleString('pt-BR') : 'a confirmação'}. O próximo login administrativo exigirá senha e código temporário.</p>
                   <p className="text-xs font-medium text-slate-500">Códigos de recuperação restantes: {twoFactorStatus.recoveryCodesRemaining}</p>
+                  {twoFactorStatus.recoveryCodesRemaining <= 2 && <p className="text-sm font-medium text-amber-800">Restam poucos códigos de recuperação. Gere uma nova leva para manter opções de acesso.</p>}
                   {twoFactorRecoveryCodes && (
                     <div className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
                       <div>
                         <p className="font-semibold text-amber-900">Guarde estes códigos agora</p>
-                        <p className="mt-1 text-sm text-amber-800">Cada código só pode ser usado uma vez. Eles não serão exibidos novamente; guarde-os fora deste dispositivo.</p>
+                        <p className="mt-1 text-sm text-amber-800">Cada código de 128 bits só pode ser usado uma vez. Eles não serão exibidos novamente; guarde-os fora deste dispositivo.</p>
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {twoFactorRecoveryCodes.map(code => <code key={code} className="rounded bg-white px-3 py-2 font-mono text-sm text-slate-900">{code}</code>)}
                       </div>
                       <button type="button" onClick={() => setTwoFactorRecoveryCodes(null)} className="rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">Já guardei os códigos</button>
+                    </div>
+                  )}
+                  {!twoFactorRecoveryCodes && (
+                    <div className="space-y-3">
+                      <button type="button" onClick={() => setTwoFactorRegenerateOpen(value => !value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        {twoFactorRegenerateOpen ? 'Cancelar regeneração' : 'Gerar novos códigos de recuperação'}
+                      </button>
+                      {twoFactorRegenerateOpen && (
+                        <div className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-3">
+                          <label className="text-sm font-medium text-slate-700">Senha atual
+                            <input type="password" autoComplete="current-password" value={twoFactorPassword} onChange={e => setTwoFactorPassword(e.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2"/>
+                          </label>
+                          <label className="text-sm font-medium text-slate-700">Código TOTP
+                            <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value.replace(/\D/g, '').slice(0, 6))} className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono tracking-widest"/>
+                          </label>
+                          <button type="button" onClick={regenerateTwoFactorRecoveryCodes} disabled={twoFactorBusy || !twoFactorPassword || twoFactorCode.length !== 6} className="self-end rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
+                            {twoFactorBusy ? 'Validando...' : 'Regenerar códigos'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
