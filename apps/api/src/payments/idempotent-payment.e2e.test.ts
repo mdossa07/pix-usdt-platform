@@ -1,9 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPaymentIdempotently } from './idempotent-payment.js';
 
 const prisma = new PrismaClient();
-const suffix = crypto.randomUUID().replace(/-/g, '');
+const suffix = randomUUID().replace(/-/g, '');
 let userId = '';
 let merchantId = '';
 let walletId = '';
