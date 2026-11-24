@@ -96,6 +96,7 @@ export default function AdminDashboard() {
   const [twoFactorStatus, setTwoFactorStatus] = useState<AdminTwoFactorStatus | null>(null);
   const [twoFactorSetup, setTwoFactorSetup] = useState<AdminTwoFactorSetup | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorPassword, setTwoFactorPassword] = useState('');
   const [twoFactorBusy, setTwoFactorBusy] = useState(false);
   const [twoFactorNotice, setTwoFactorNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -233,11 +234,19 @@ export default function AdminDashboard() {
 
   const beginTwoFactorSetup = async () => {
     if (!token) return;
+    if (!twoFactorPassword) {
+      setTwoFactorNotice('Informe sua senha atual para iniciar a configuração.');
+      return;
+    }
     setTwoFactorBusy(true);
     setTwoFactorNotice(null);
     try {
-      const result = await apiRequest<AdminTwoFactorSetup>('/v1/admin/2fa/setup', { method: 'POST' }, token);
+      const result = await apiRequest<AdminTwoFactorSetup>('/v1/admin/2fa/setup', {
+        method: 'POST',
+        body: JSON.stringify({ password: twoFactorPassword }),
+      }, token);
       setTwoFactorSetup(result);
+      setTwoFactorPassword('');
       setTwoFactorCode('');
       setTwoFactorNotice('Adicione esta chave ao aplicativo autenticador e confirme com o código de seis dígitos.');
     } catch (err) {
@@ -323,9 +332,14 @@ export default function AdminDashboard() {
                 <div className="space-y-3">
                   <p className="text-sm text-slate-600">A configuração é feita com um segredo exclusivo, cifrado no banco. O código de confirmação é necessário para ativar o segundo fator.</p>
                   {!twoFactorSetup ? (
-                    <button type="button" onClick={beginTwoFactorSetup} disabled={twoFactorBusy} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
-                      {twoFactorBusy ? 'Preparando...' : (twoFactorStatus.setupPending ? 'Gerar nova chave de configuração' : 'Configurar autenticador')}
-                    </button>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <label className="flex-1 text-sm font-medium text-slate-700">Confirme sua senha atual
+                        <input type="password" autoComplete="current-password" value={twoFactorPassword} onChange={e => setTwoFactorPassword(e.target.value)} className="mt-1 w-full rounded border border-slate-300 px-3 py-2" placeholder="Senha da conta administrativa"/>
+                      </label>
+                      <button type="button" onClick={beginTwoFactorSetup} disabled={twoFactorBusy || !twoFactorPassword} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
+                        {twoFactorBusy ? 'Preparando...' : (twoFactorStatus.setupPending ? 'Gerar nova chave de configuração' : 'Configurar autenticador')}
+                      </button>
+                    </div>
                   ) : (
                     <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
                       <div>
