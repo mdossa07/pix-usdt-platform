@@ -6,6 +6,7 @@ import Link from 'next/link';
 export default function WorkspaceShell({ children, area }: { children: ReactNode; area: string }) {
   const logout = () => {
     localStorage.removeItem('pixsplit_token');
+    sessionStorage.removeItem('pixsplit_pending_payment_create');
     window.location.assign('/login');
   };
 
