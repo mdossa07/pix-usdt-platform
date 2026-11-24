@@ -40,14 +40,15 @@ As rotas de integração merchant-to-server usam os cabeçalhos:
 - `x-pixsplit-key-id`: UUID da chave gerada no painel.
 - `x-pixsplit-timestamp`: timestamp Unix em milissegundos.
 - `x-pixsplit-signature`: HMAC-SHA256 em hexadecimal minúsculo.
+- `x-pixsplit-nonce`: valor aleatório criptograficamente seguro, hexadecimal, único por requisição.
 
 A assinatura é calculada sobre os bytes UTF-8 exatos do corpo e o caminho sem query string:
 
 ```text
-METHOD\nPATH\nTIMESTAMP\nRAW_BODY
+METHOD\nPATH\nTIMESTAMP\nNONCE\nRAW_BODY
 ```
 
-Calcule `HMAC-SHA256(secret, signingString)`. O segredo é exibido somente na criação; em repouso, a API guarda um hash de consistência e o segredo cifrado com AES-256-GCM. O hash sozinho não é suficiente para assinar chamadas. Chaves antigas sem segredo cifrado são recusadas e precisam ser substituídas. O timestamp fora da janela de cinco minutos é recusado; clientes também devem usar IDs externos estáveis para operações idempotentes.
+Calcule `HMAC-SHA256(secret, signingString)`. O segredo é exibido somente na criação; em repouso, a API guarda um hash de consistência e o segredo cifrado com AES-256-GCM. O hash sozinho não é suficiente para assinar chamadas. Chaves antigas sem segredo cifrado são recusadas e precisam ser substituídas. O timestamp fora da janela de cinco minutos é recusado. O nonce é consumido atomicamente no PostgreSQL e uma repetição recebe HTTP 409 `request_replayed`, inclusive em chamadas concorrentes a instâncias diferentes. Gere um nonce novo para cada tentativa; em caso de timeout, use a mesma chave de idempotência de negócio para consultar o resultado, não reenvie a mesma assinatura.
 
 ## Carteiras
 
