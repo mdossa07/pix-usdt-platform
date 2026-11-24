@@ -256,7 +256,7 @@ app.post('/v1/admin/2fa/setup', {
   const parsed = z.object({ password: z.string().min(1).max(128) }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'current_password_required' });
   const user = await prisma.user.findUnique({ where: { id: userId(request) } });
-  if (!user || !user.isActive) return reply.code(404).send({ error: 'user_not_found' });
+  if (!user || !user.isActive || user.role !== 'SUPER_ADMIN') return reply.code(404).send({ error: 'user_not_found' });
   if (!(await argon2.verify(user.passwordHash, parsed.data.password))) {
     return reply.code(401).send({ error: 'invalid_credentials' });
   }
@@ -353,6 +353,7 @@ app.post('/v1/admin/2fa/recovery-codes/regenerate', {
       where: {
         id: user.id,
         isActive: true,
+        role: 'SUPER_ADMIN',
         twoFactorEnabledAt: { not: null },
         OR: [
           { twoFactorLastUsedStep: null },
