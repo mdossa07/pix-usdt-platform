@@ -125,7 +125,7 @@ app.post('/v1/auth/login', async (request, reply) => {
 
   if (user.role === 'SUPER_ADMIN' && user.twoFactorEnabledAt && user.twoFactorSecretEncrypted) {
     const challengeToken = app.jwt.sign(
-      { sub: user.id, purpose: 'admin-2fa-challenge' },
+      { sub: user.id, role: user.role, purpose: 'admin-2fa-challenge' },
       { expiresIn: '5m' },
     );
     return { requiresTwoFactor: true, challengeToken };
@@ -145,13 +145,13 @@ app.post('/v1/auth/2fa/verify', {
   }).strict().safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_challenge' });
 
-  let claims: { sub?: string; purpose?: string };
+  let claims: { sub?: string; role?: string; purpose?: string };
   try {
-    claims = app.jwt.verify(parsed.data.challengeToken) as { sub?: string; purpose?: string };
+    claims = app.jwt.verify(parsed.data.challengeToken) as { sub?: string; role?: string; purpose?: string };
   } catch {
     return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
   }
-  if (!claims.sub || claims.purpose !== 'admin-2fa-challenge') {
+  if (!claims.sub || claims.role !== 'SUPER_ADMIN' || claims.purpose !== 'admin-2fa-challenge') {
     return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
   }
 
