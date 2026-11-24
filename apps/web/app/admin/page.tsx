@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
 import { buildCsv } from '../../lib/csv';
-import { calculateSettledCommissionUnits, countActionablePayments, formatUsdtUnits } from '../../lib/admin-metrics';
+import { calculateSettledCommissionUnits, formatUsdtUnits, getActionablePayments } from '../../lib/admin-metrics';
 
 interface PaymentRecord {
   id: string;
@@ -122,7 +122,7 @@ export default function AdminDashboard() {
 
   const totalCommission = calculateSettledCommissionUnits(payments);
   const completedCount = payments.filter(p => p.status === 'COMPLETED').length;
-  const stuckPayments = countActionablePayments(payments);
+  const stuckPayments = getActionablePayments(payments);
 
   const handleRetrySettlement = async (paymentId: string) => {
     try {
