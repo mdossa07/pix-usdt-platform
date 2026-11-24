@@ -86,7 +86,7 @@ describe('idempotent payment creation', () => {
 
   it('serializes concurrent same-key requests and creates exactly one payment', async () => {
     const key = `payment-${suffix}-concurrent`;
-    const input = await createInput(key);
+    const input = await createInput(key, 5_000, 225);
     const results = await Promise.all([
       createPaymentIdempotently(prisma, input),
       createPaymentIdempotently(prisma, input),
@@ -101,7 +101,7 @@ describe('idempotent payment creation', () => {
     expect(responses[0].status).toBe('PIX_PENDING');
     const savedPayment = await prisma.payment.findUniqueOrThrow({ where: { id: responses[0].id } });
     expect(savedPayment.status).toBe('PIX_PENDING');
-    expect(savedPayment.commissionBps).toBe(200);
+    expect(savedPayment.commissionBps).toBe(225);
     expect(await prisma.payment.count({ where: { merchantId } })).toBe(1);
     expect(await prisma.idempotencyRecord.count({
       where: { scope: `merchant:POST:/v1/payments:${merchantId}`, key },
