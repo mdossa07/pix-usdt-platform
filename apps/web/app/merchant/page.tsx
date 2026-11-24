@@ -204,6 +204,7 @@ export default function MerchantDashboard() {
       const message = error instanceof Error ? error.message : 'Não foi possível carregar os dados.';
       if (message === 'unauthorized') {
         localStorage.removeItem('pixsplit_authenticated');
+        localStorage.removeItem('pixsplit_token');
         sessionStorage.removeItem('pixsplit_csrf');
         window.location.assign('/login');
         return;
