@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/payments/split.test.ts src/payments/orchestrator.test.ts src/providers/foxbit/foxbit-webhook.test.ts src/providers/transfi/transfi-webhook.test.ts src/payments/mode-guard.test.ts",
+    "test": "tsx --test src/payments/split.test.ts src/payments/orchestrator.test.ts src/providers/foxbit/foxbit-webhook.test.ts src/providers/transfi/transfi-webhook.test.ts src/payments/mode-guard.test.ts src/wallets/wallet-eligibility.test.ts",
     "test:e2e": "docker compose -f ../../docker-compose.test.yml up -d --wait && dotenv -e ../../.env.test -- prisma db push --schema prisma/schema.prisma --accept-data-loss && vitest run src/payments/orchestrator.e2e.test.ts && docker compose -f ../../docker-compose.test.yml down -v",
     "create-admin": "tsx src/scripts/create-admin.ts",
     "db:generate": "dotenv -e ../../.env -- prisma generate --schema prisma/schema.prisma",
