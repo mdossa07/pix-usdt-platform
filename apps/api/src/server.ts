@@ -15,6 +15,7 @@ import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
+import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
@@ -61,6 +62,8 @@ app.get('/v1/provider/status', async () => ({
   liveOperationsEnabled: false,
   pendingApprovals: ['aprovação comercial para pagamentos PIX de terceiros', 'confirmação do fluxo de conversão BRL/USDT', 'provisionamento e identificação de beneficiários', 'aprovação de Travel Rule', 'dois payouts USDT independentes por pagamento', 'testes sandbox de falhas parciais e conciliação'],
 }));
+
+const mockFinancialExecutionEnabled = canRunMockFinancialExecution(config.NODE_ENV, config.PAYMENTS_MODE);
 
 const registerSchema = z.object({
   fullName: z.string().min(3).max(120), email: z.string().email().max(254), password: z.string().min(12).max(128),
@@ -228,6 +231,7 @@ app.get('/v1/payments', { preHandler: app.authenticate }, async (request) => {
 });
 
 app.post('/v1/payments', { preHandler: app.authenticate }, async (request, reply) => {
+  if (!mockFinancialExecutionEnabled) return reply.code(503).send({ error: 'financial_operations_disabled' });
   const schema = z.object({ amountBrlCents: z.number().int().min(500).max(10_000_000), walletId: z.string().min(1), description: z.string().max(120).optional() });
   const parsed = schema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_payment', details: parsed.error.flatten() });
@@ -280,7 +284,7 @@ app.get('/v1/checkout/:externalId', async (request, reply) => {
 
 /** Local-only simulation. It never contacts the provider or blockchain. */
 app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async (request, reply) => {
-  if (config.PAYMENTS_MODE !== 'mock' || config.NODE_ENV === 'production') return reply.code(403).send({ error: 'mock_only' });
+  if (!mockFinancialExecutionEnabled) return reply.code(403).send({ error: 'mock_only' });
   const merchant = await merchantFor(request);
   const { id } = request.params as { id: string };
   const payment = await prisma.payment.findFirst({ where: { id, merchantId: merchant.id } });
@@ -304,6 +308,7 @@ app.post('/v1/payments/:id/mock-settle', { preHandler: app.authenticate }, async
 });
 
 app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, reply) => {
+  if (config.PAYMENTS_MODE === 'mock') return reply.code(503).send({ error: 'provider_webhooks_disabled' });
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
   const signatureHeader = request.headers['x-fb-signature'];
   const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
@@ -361,6 +366,7 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
 });
 // --- TransFi Webhook Handler ---
 app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, reply) => {
+  if (config.PAYMENTS_MODE === 'mock') return reply.code(503).send({ error: 'provider_webhooks_disabled' });
   const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
   const signatureHeader = request.headers['x-transfi-hmac-hash'];
   const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
@@ -705,6 +711,7 @@ app.patch('/v1/admin/merchants/:id', { preHandler: [app.authenticate] }, async (
 
 // --- Admin: Retry Failed Payment ---
 app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (!mockFinancialExecutionEnabled) return reply.code(503).send({ error: 'financial_reconciliation_disabled' });
   const user = (request as any).user;
   if (user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const { id } = request.params as { id: string };
@@ -743,6 +750,7 @@ const createPaymentSchema = z.object({
 });
 
 app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
+  if (!mockFinancialExecutionEnabled) return reply.code(503).send({ error: 'financial_operations_disabled' });
   const merchant = (request as any).merchant as { merchantId: string; keyId: string };
   const parsed = createPaymentSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -844,21 +852,21 @@ app.setErrorHandler((error, request, reply) => {
   reply.code(status).send({ error: status >= 500 ? 'internal_server_error' : err.message, requestId: request.id });
 });
 
-// Start async workers for payment settlement and transfer retries
-const settlementWorker = startSettlementWorker();
-const retryWorker = startRetryWorker();
+// Mock financial workers must never run in production.
+const settlementWorker = mockFinancialExecutionEnabled ? startSettlementWorker() : null;
+const retryWorker = mockFinancialExecutionEnabled ? startRetryWorker() : null;
 const reconciliation = new ReconciliationService(prisma);
-const reconciliationTimer = setInterval(() => {
+const reconciliationTimer = mockFinancialExecutionEnabled ? setInterval(() => {
   void reconciliation.reconcile().catch((error) => {
     app.log.error({ err: error instanceof Error ? error.name : 'unknown' }, 'Payment reconciliation cycle failed');
   });
-}, 5 * 60 * 1000);
-reconciliationTimer.unref();
+}, 5 * 60 * 1000) : null;
+reconciliationTimer?.unref();
 
 const shutdown = async () => {
-  clearInterval(reconciliationTimer);
-  await settlementWorker.close();
-  await retryWorker.close();
+  if (reconciliationTimer) clearInterval(reconciliationTimer);
+  await settlementWorker?.close();
+  await retryWorker?.close();
   await closeQueues();
   await app.close();
   await prisma.$disconnect();
