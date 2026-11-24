@@ -148,7 +148,7 @@ export default function AdminDashboard() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar dados');
       })
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, twoFactorStatus?.enabled]);
 
   if (!token) return <div className="text-slate-500 p-8">Redirecionando para o acesso seguro…</div>;
   if (error) return <div className="text-red-700 p-8">{error}</div>;
