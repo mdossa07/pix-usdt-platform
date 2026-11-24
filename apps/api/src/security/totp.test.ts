@@ -4,6 +4,7 @@ import {
   buildTotpProvisioningUri,
   encodeBase32,
   generateTotpSecret,
+  matchTotpCounter,
   verifyTotp,
 } from './totp.js';
 
@@ -21,6 +22,7 @@ test('encodes base32 using RFC alphabet without padding', () => {
 test('validates RFC 6238 SHA-1 TOTP six-digit vector', () => {
   const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
   assert.equal(verifyTotp(secret, '287082', 59_000, 0), true);
+  assert.equal(matchTotpCounter(secret, '287082', 59_000, 0), 1);
   assert.equal(verifyTotp(secret, '287083', 59_000, 0), false);
 });
 
