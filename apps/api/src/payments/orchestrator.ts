@@ -173,26 +173,42 @@ export class PaymentOrchestrator {
         }
         if (remoteStatus?.status === 'FAILED') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
-              status: TransferStatus.FAILED,
-              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
-            } });
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { merchantTransferStatus: TransferStatus.FAILED },
+            const changed = await tx.transfer.updateMany({
+              where: { id: currentAttempt.id, status: { not: TransferStatus.COMPLETED } },
+              data: {
+                status: TransferStatus.FAILED,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+              },
             });
+            if (changed.count === 1) {
+              await tx.payment.updateMany({
+                where: { id: paymentId, merchantTransferStatus: { not: TransferStatus.COMPLETED } },
+                data: { merchantTransferStatus: TransferStatus.FAILED },
+              });
+            }
           });
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
-              status: TransferStatus.PROCESSING,
-              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
-            } });
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { merchantTransferStatus: TransferStatus.PROCESSING },
+            const changed = await tx.transfer.updateMany({
+              where: {
+                id: currentAttempt.id,
+                status: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
+              },
+              data: {
+                status: TransferStatus.PROCESSING,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+              },
             });
+            if (changed.count === 1) {
+              await tx.payment.updateMany({
+                where: {
+                  id: paymentId,
+                  merchantTransferStatus: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
+                },
+                data: { merchantTransferStatus: TransferStatus.PROCESSING },
+              });
+            }
           });
           return;
         } else if (remoteStatus === null) {
@@ -387,26 +403,42 @@ export class PaymentOrchestrator {
         }
         if (remoteStatus?.status === 'FAILED') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
-              status: TransferStatus.FAILED,
-              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
-            } });
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { platformTransferStatus: TransferStatus.FAILED },
+            const changed = await tx.transfer.updateMany({
+              where: { id: currentAttempt.id, status: { not: TransferStatus.COMPLETED } },
+              data: {
+                status: TransferStatus.FAILED,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+              },
             });
+            if (changed.count === 1) {
+              await tx.payment.updateMany({
+                where: { id: paymentId, platformTransferStatus: { not: TransferStatus.COMPLETED } },
+                data: { platformTransferStatus: TransferStatus.FAILED },
+              });
+            }
           });
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
           await this.prisma.$transaction(async (tx) => {
-            await tx.transfer.update({ where: { id: currentAttempt.id }, data: {
-              status: TransferStatus.PROCESSING,
-              providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
-            } });
-            await tx.payment.update({
-              where: { id: paymentId },
-              data: { platformTransferStatus: TransferStatus.PROCESSING },
+            const changed = await tx.transfer.updateMany({
+              where: {
+                id: currentAttempt.id,
+                status: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
+              },
+              data: {
+                status: TransferStatus.PROCESSING,
+                providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
+              },
             });
+            if (changed.count === 1) {
+              await tx.payment.updateMany({
+                where: {
+                  id: paymentId,
+                  platformTransferStatus: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
+                },
+                data: { platformTransferStatus: TransferStatus.PROCESSING },
+              });
+            }
           });
           return;
         } else if (remoteStatus === null) {
@@ -548,27 +580,51 @@ export class PaymentOrchestrator {
    * A provider/network error never changes a submitted transfer to FAILED.
    */
   private async syncPaymentGlobalStatus(paymentId: string): Promise<void> {
-    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    const status = derivePaymentAggregateStatus(
-      payment.merchantTransferStatus,
-      payment.platformTransferStatus,
-    );
-    const data: {
-      status: PaymentStatus;
-      completedAt?: Date;
-      failureCode?: string | null;
-      failureMessage?: string | null;
-    } = { status };
+    // Compare-and-set the aggregate against the exact two leg states we read.
+    // Concurrent webhook/worker updates make the predicate fail, forcing a fresh
+    // read instead of allowing a stale aggregate to overwrite a newer state.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const payment = await this.prisma.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+        select: {
+          merchantTransferStatus: true,
+          platformTransferStatus: true,
+          completedAt: true,
+          failureCode: true,
+          failureMessage: true,
+        },
+      });
+      const status = derivePaymentAggregateStatus(
+        payment.merchantTransferStatus,
+        payment.platformTransferStatus,
+      );
+      const data: {
+        status: PaymentStatus;
+        completedAt?: Date;
+        failureCode?: string | null;
+        failureMessage?: string | null;
+      } = { status };
 
-    if (status === PaymentStatus.COMPLETED) {
-      data.completedAt = payment.completedAt ?? new Date();
-      data.failureCode = null;
-      data.failureMessage = null;
-    } else if (status === PaymentStatus.UNDER_REVIEW) {
-      data.failureCode = payment.failureCode ?? 'PAYOUT_REQUIRES_REVIEW';
-      data.failureMessage = payment.failureMessage ?? 'A payout leg requires reconciliation before this payment can complete.';
+      if (status === PaymentStatus.COMPLETED) {
+        data.completedAt = payment.completedAt ?? new Date();
+        data.failureCode = null;
+        data.failureMessage = null;
+      } else if (status === PaymentStatus.UNDER_REVIEW) {
+        data.failureCode = payment.failureCode ?? 'PAYOUT_REQUIRES_REVIEW';
+        data.failureMessage = payment.failureMessage ?? 'A payout leg requires reconciliation before this payment can complete.';
+      }
+
+      const updated = await this.prisma.payment.updateMany({
+        where: {
+          id: paymentId,
+          merchantTransferStatus: payment.merchantTransferStatus,
+          platformTransferStatus: payment.platformTransferStatus,
+        },
+        data,
+      });
+      if (updated.count === 1) return;
     }
-
-    await this.prisma.payment.update({ where: { id: paymentId }, data });
+    // Sustained contention is safe: leave the aggregate for the next
+    // reconciliation pass rather than writing a potentially stale status.
   }
 }
