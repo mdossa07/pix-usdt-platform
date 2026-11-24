@@ -1,4 +1,5 @@
 import { PrismaClient, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { calculateUsdtSplit, mockBrlToUsdt } from './split.js';
 import type { PaymentProvider } from '../providers/provider-contract.js';
 import { decryptPii } from '../security/crypto.js';
