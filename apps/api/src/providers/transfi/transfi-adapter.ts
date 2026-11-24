@@ -5,7 +5,6 @@ import type {
   SettlementLeg,
   TransferStatusResult,
 } from '../provider-contract.js';
-import { TransFiClient } from './transfi-client.js';
 import { config } from '../../config.js';
 import { createHash } from 'node:crypto';
 
@@ -56,17 +55,11 @@ export function mapTransFiTransferStatus(status: string): 'PENDING' | 'COMPLETED
 }
 
 export class TransFiAdapter implements PaymentProvider {
-  private readonly client: TransFiClient;
-  private readonly mode: 'mock' | 'sandbox' | 'live';
-
   constructor(mode: 'mock' | 'sandbox' | 'live' = config.PAYMENTS_MODE) {
-    this.client = new TransFiClient();
-    this.mode = mode;
-
     // Fail closed: the available implementation is not the complete v3 flow.
     // In particular, no customer sender/recipient registration or BRL PIX
     // payment-code discovery is wired into the current provider contract.
-    if (this.mode !== 'mock') {
+    if (mode !== 'mock') {
       throw new Error(
         'TRANSFI_ADAPTER_NOT_HOMOLOGATED: complete v3 sender/recipient onboarding, BRL PIX payment-method discovery and both payout legs before sandbox/live execution.',
       );
@@ -99,7 +92,7 @@ export class TransFiAdapter implements PaymentProvider {
     if (!providerTransferId?.startsWith('tf-mock-')) return null;
     return {
       status: 'COMPLETED',
-      providerReference: providerTransferId || idempotencyKey,
+      providerReference: providerTransferId,
     };
   }
 
