@@ -12,6 +12,7 @@ import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { handleFoxbitWebhookEvent } from './providers/foxbit/foxbit-webhook.js';
+import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
 import { startSettlementWorker, startRetryWorker } from './queues/workers.js';
 import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
@@ -304,6 +305,37 @@ app.post('/webhooks/foxbit', { config: { rawBody: true } }, async (request, repl
     eventType: result.eventType,
     paymentUpdated: result.paymentUpdated,
   });
+});
+
+// --- TransFi Webhook Handler ---
+app.post('/webhooks/transfi', { config: { rawBody: true } }, async (request, reply) => {
+  const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
+  const signatureHeader = request.headers['x-transfi-hmac-hash'];
+  const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  if (!raw) return reply.code(400).send({ error: 'missing_raw_body' });
+  if (!signature) return reply.code(401).send({ error: 'missing_signature' });
+
+  try {
+    verifyTransFiWebhookSignature(raw, signature);
+  } catch {
+    return reply.code(403).send({ error: 'invalid_signature' });
+  }
+
+  const payload = parseTransFiWebhook(raw);
+  const newState = mapTransFiStatusToPaymentState(payload.status);
+
+  if (newState && payload.entityId) {
+    const payment = await prisma.payment.findFirst({ where: { providerOrderId: payload.entityId } });
+    if (payment) {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: newState === 'PAID' ? PaymentStatus.PIX_CONFIRMED : newState === 'COMPLETED' ? PaymentStatus.COMPLETED : newState === 'FAILED' ? PaymentStatus.FAILED : payment.status },
+      });
+      request.log.info({ entityId: payload.entityId, newState, eventType: payload.type }, 'TransFi webhook processed');
+    }
+  }
+
+  return reply.code(200).send({ received: true });
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
