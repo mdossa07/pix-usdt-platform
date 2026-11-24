@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
+import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from './security/totp.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -33,8 +34,14 @@ await app.register(jwt, { secret: config.JWT_SECRET, sign: { expiresIn: '2h' } }
 await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
 
 app.decorate('authenticate', async (request, reply) => {
-  try { await request.jwtVerify(); }
-  catch { await reply.code(401).send({ error: 'unauthorized' }); }
+  try {
+    await request.jwtVerify();
+    if ((request.user as { purpose?: string }).purpose === 'admin-2fa-challenge') {
+      await reply.code(401).send({ error: 'two_factor_required' });
+    }
+  } catch {
+    await reply.code(401).send({ error: 'unauthorized' });
+  }
 });
 
 function userId(request: FastifyRequest) { return request.user.sub; }
@@ -115,15 +122,159 @@ app.post('/v1/auth/login', async (request, reply) => {
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_credentials' });
   const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() }, include: { merchant: true } });
   if (!user || !user.isActive || !(await argon2.verify(user.passwordHash, parsed.data.password))) return reply.code(401).send({ error: 'invalid_credentials' });
+
+  if (user.role === 'SUPER_ADMIN' && user.twoFactorEnabledAt && user.twoFactorSecretEncrypted) {
+    const challengeToken = app.jwt.sign(
+      { sub: user.id, purpose: 'admin-2fa-challenge' },
+      { expiresIn: '5m' },
+    );
+    return { requiresTwoFactor: true, challengeToken };
+  }
+
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   const token = app.jwt.sign({ sub: user.id, role: user.role });
   return { token, user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role }, merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null };
+});
+
+app.post('/v1/auth/2fa/verify', {
+  config: { rateLimit: { max: 6, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  const parsed = z.object({
+    challengeToken: z.string().min(1).max(4096),
+    code: z.string().regex(/^\\d{6}$/),
+  }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_challenge' });
+
+  let claims: { sub?: string; purpose?: string };
+  try {
+    claims = app.jwt.verify(parsed.data.challengeToken) as { sub?: string; purpose?: string };
+  } catch {
+    return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
+  }
+  if (!claims.sub || claims.purpose !== 'admin-2fa-challenge') {
+    return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: claims.sub }, include: { merchant: true } });
+  if (!user || !user.isActive || user.role !== 'SUPER_ADMIN' || !user.twoFactorEnabledAt || !user.twoFactorSecretEncrypted) {
+    return reply.code(401).send({ error: 'invalid_two_factor_challenge' });
+  }
+
+  const secret = decryptPii(user.twoFactorSecretEncrypted);
+  const matchedStep = matchTotpCounter(secret, parsed.data.code);
+  if (matchedStep === null) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+
+  const consumed = await prisma.user.updateMany({
+    where: {
+      id: user.id,
+      isActive: true,
+      role: 'SUPER_ADMIN',
+      twoFactorEnabledAt: { not: null },
+      OR: [
+        { twoFactorLastUsedStep: null },
+        { twoFactorLastUsedStep: { lt: BigInt(matchedStep) } },
+      ],
+    },
+    data: {
+      twoFactorLastUsedStep: BigInt(matchedStep),
+      lastLoginAt: new Date(),
+    },
+  });
+  if (consumed.count !== 1) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
+
+  const token = app.jwt.sign({ sub: user.id, role: user.role });
+  await prisma.auditEvent.create({
+    data: {
+      actorUserId: user.id,
+      action: 'ADMIN_2FA_LOGIN',
+      entityType: 'USER',
+      entityId: user.id,
+      ipAddress: request.ip,
+    },
+  });
+  return {
+    token,
+    user: { id: user.id, email: user.email, fullName: user.fullName, role: user.role },
+    merchant: user.merchant ? { id: user.merchant.id, kycStatus: user.merchant.kycStatus } : null,
+  };
 });
 
 app.get('/v1/me', { preHandler: app.authenticate }, async (request, reply) => {
   const user = await prisma.user.findUnique({ where: { id: userId(request) }, include: { merchant: true } });
   if (!user) return reply.code(404).send({ error: 'user_not_found' });
   return { id: user.id, email: user.email, fullName: user.fullName, role: user.role, merchant: user.merchant ? { id: user.merchant.id, legalName: user.merchant.legalName, kycStatus: user.merchant.kycStatus, isEnabled: user.merchant.isEnabled } : null };
+});
+
+app.get('/v1/admin/2fa/status', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const user = await prisma.user.findUnique({ where: { id: userId(request) } });
+  if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  return {
+    enabled: Boolean(user.twoFactorEnabledAt && user.twoFactorSecretEncrypted),
+    enabledAt: user.twoFactorEnabledAt,
+  };
+});
+
+app.post('/v1/admin/2fa/setup', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const user = await prisma.user.findUnique({ where: { id: userId(request) } });
+  if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  if (user.twoFactorEnabledAt) return reply.code(409).send({ error: 'two_factor_already_enabled' });
+
+  const secret = generateTotpSecret();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { twoFactorPendingSecretEncrypted: encryptPii(secret) },
+  });
+  await audit(request, 'ADMIN_2FA_SETUP_STARTED', 'USER', user.id, {});
+  return {
+    secret,
+    provisioningUri: buildTotpProvisioningUri(user.email, secret),
+    issuer: 'PixSplit',
+    algorithm: 'SHA1',
+    digits: 6,
+    periodSeconds: 30,
+  };
+});
+
+app.post('/v1/admin/2fa/enable', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 6, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const parsed = z.object({ code: z.string().regex(/^\\d{6}$/) }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_two_factor_code' });
+
+  const user = await prisma.user.findUnique({ where: { id: userId(request) } });
+  if (!user) return reply.code(404).send({ error: 'user_not_found' });
+  if (user.twoFactorEnabledAt) return reply.code(409).send({ error: 'two_factor_already_enabled' });
+  if (!user.twoFactorPendingSecretEncrypted) return reply.code(409).send({ error: 'two_factor_setup_required' });
+
+  const secret = decryptPii(user.twoFactorPendingSecretEncrypted);
+  const matchedStep = matchTotpCounter(secret, parsed.data.code);
+  if (matchedStep === null) return reply.code(400).send({ error: 'invalid_two_factor_code' });
+
+  const enabledAt = new Date();
+  const result = await prisma.user.updateMany({
+    where: {
+      id: user.id,
+      twoFactorEnabledAt: null,
+      twoFactorPendingSecretEncrypted: user.twoFactorPendingSecretEncrypted,
+    },
+    data: {
+      twoFactorSecretEncrypted: user.twoFactorPendingSecretEncrypted,
+      twoFactorPendingSecretEncrypted: null,
+      twoFactorEnabledAt: enabledAt,
+      twoFactorLastUsedStep: BigInt(matchedStep),
+    },
+  });
+  if (result.count !== 1) return reply.code(409).send({ error: 'two_factor_setup_changed' });
+
+  await audit(request, 'ADMIN_2FA_ENABLED', 'USER', user.id, { enabledAt: enabledAt.toISOString() });
+  return { enabled: true, enabledAt };
 });
 
 app.get('/v1/wallets', { preHandler: app.authenticate }, async (request) => {
