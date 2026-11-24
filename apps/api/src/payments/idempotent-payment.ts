@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PaymentStatus, Prisma, PrismaClient } from '@prisma/client';
+import { createMerchantWebhookDeliveries } from '../webhooks/outbound-outbox.js';
 
 const IDEMPOTENCY_SCOPE_PREFIX = 'merchant:POST:/v1/payments';
 
@@ -159,6 +160,7 @@ export async function createPaymentIdempotently(
           } as Prisma.InputJsonObject,
         },
       });
+      await createMerchantWebhookDeliveries(tx, payment.id, 'payment.created');
 
       return { kind: 'created', response };
     });
