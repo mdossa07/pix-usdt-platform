@@ -371,6 +371,27 @@ describe('PaymentOrchestrator — Critical Financial Scenarios', () => {
     expect(updated.transfers).toHaveLength(2);
     expect(provider.callLog.filter((entry) => entry.method === 'settleMerchantUsdt')).toHaveLength(1);
     expect(provider.callLog.filter((entry) => entry.method === 'settlePlatformCommission')).toHaveLength(1);
+
+    // A late "pending" lookup must never regress a transfer already completed
+    // by a concurrent webhook/worker.
+    const merchantTransfer = updated.transfers.find((transfer) => transfer.kind === TransferKind.MERCHANT_PAYOUT)!;
+    await prisma.transfer.update({
+      where: { id: merchantTransfer.id },
+      data: { status: TransferStatus.COMPLETED },
+    });
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { merchantTransferStatus: TransferStatus.COMPLETED },
+    });
+    await orchestrator.settleMerchant(payment.id);
+    const afterLatePending = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      include: { transfers: true },
+    });
+    expect(afterLatePending.status).toBe(PaymentStatus.COMPLETED);
+    expect(afterLatePending.merchantTransferStatus).toBe(TransferStatus.COMPLETED);
+    expect(afterLatePending.transfers.find((transfer) => transfer.kind === TransferKind.MERCHANT_PAYOUT)?.status)
+      .toBe(TransferStatus.COMPLETED);
   });
 
 
