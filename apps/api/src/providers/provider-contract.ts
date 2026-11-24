@@ -22,5 +22,5 @@ export interface PaymentProvider {
   settleMerchantUsdt(input: { merchantWallet: string; network: string; amountUsdt: string; beneficiary: CreatePixChargeInput['beneficiary']; }, idempotencyKey: string): Promise<SettlementLeg>;
   settlePlatformCommission(input: { platformWallet: string; network: string; amountUsdt: string; }, idempotencyKey: string): Promise<SettlementLeg>;
   /** Consulta o status real de uma transferência pelo ID do provedor ou chave de idempotência. Retorna null se o provedor não reconhecer a operação. */
-  getTransferStatus?(providerTransferId: string, idempotencyKey: string): Promise<TransferStatusResult | null>;
+  getTransferStatus?(providerTransferId: string | null, idempotencyKey: string): Promise<TransferStatusResult | null>;
 }
