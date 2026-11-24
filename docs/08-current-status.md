@@ -1,40 +1,49 @@
-# Status do projeto — 23/11/2026
+# Status do projeto — 24/11/2026
 
-## Entregue nesta iteração
+## Entregue e validado
 
 - Monorepo Next.js + Fastify + Prisma/PostgreSQL.
-- Interface inicial de merchant e superadmin, com navegação, dashboard, operações, carteira, API e relatórios.
-- Cadastro e login com Argon2id e JWT.
-- Dados sensíveis de merchant/carteira criptografados com AES-256-GCM.
-- Cadastro de destino USDT em Polygon/Tron com exchange/VASP, titular, CPF/CNPJ e país da entidade VASP.
-- Cadastro da carteira de comissão da plataforma por rede, exclusivo do superadmin.
-- Criação de pagamentos mock e simulação local 98%/2%.
-- Ledger de dupla entrada, transfer legs por beneficiário, idempotency model, audit log e tabela de webhooks.
-- Transporte REST Foxbit com assinatura HMAC conforme a documentação geral e validação de assinatura de webhook V2.
-- Documentação do fluxo e dos pontos específicos que a Foxbit precisa habilitar.
+- Interfaces iniciais de superadmin e comerciante, checkout público e fluxo de autenticação.
+- Cadastro/login com Argon2id e JWT; RBAC para rotas administrativas e escopo por comerciante.
+- Criptografia AES-256-GCM de dados pessoais e segredos sensíveis.
+- Chaves de API de comerciante com hash separado, segredo de assinatura criptografado, HMAC, timestamp e nonce anti-replay.
+- Cadastro e revisão administrativa de carteiras USDT em Polygon/Tron, com status de verificação, seleção de carteira padrão e endereços mascarados nos painéis.
+- Criação e simulação local de cobrança PIX; distribuição contábil modelada em 98%/2%, com duas pernas e ledger.
+- Orquestração de liquidação com chaves idempotentes por perna, tentativas preservadas e tratamento conservador de resultados desconhecidos.
+- Webhooks com assinatura validada sobre o corpo bruto, fingerprint SHA-256, rejeição de payload divergente sob o mesmo ID, claim atômico por lease, recuperação após expiração e fencing token para impedir que um worker antigo finalize a reserva de outro.
+- Migração inicial do banco e migration incremental de leases; CI executa `prisma migrate deploy` em schema PostgreSQL vazio.
+- `pnpm db:migrate` executa `prisma migrate deploy`; `pnpm db:migrate:dev` é reservado à criação de migrações durante desenvolvimento.
+- Adaptadores Foxbit e TransFi explicitamente bloqueados para `sandbox/live` enquanto os contratos e a homologação não estiverem completos.
 
-## Limites da versão
+## Verificações confirmadas
 
-- Nenhuma cobrança PIX real é emitida; a resposta contém `MOCK-PIX-NOT-PAYABLE`.
-- Nenhuma conversão USDT real é executada.
-- Nenhum saque on-chain é executado.
-- O adapter financeiro Foxbit ainda não tem métodos de negócio implementados: não foram inventados endpoints para funding/split.
-- O webhook Foxbit é validado e armazenado, mas não altera saldo/pagamento até o mapeamento de eventos ser homologado.
-- Cadastro de API keys, outgoing webhooks, gestão completa de KYC/KYB, filas BullMQ e painel de Compliance estão no roadmap.
-- Deploy e produção estão bloqueados deliberadamente.
+- PR #4 (webhooks, fingerprint legado, leases e baseline de migrações) integrado no commit `d335c5d`. CI completo aprovado: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45475202890
+- PR #5 (bloqueio direto de adaptadores incompletos Foxbit/TransFi) integrado no commit `02042ef`. CI completo aprovado: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45476093116
+- A execução inclui install, geração Prisma, lint, testes unitários, migrations em schema vazio, cenários financeiros PostgreSQL, HMAC, webhooks e build.
 
-## Verificações executadas no ambiente de desenvolvimento desta entrega
+## Limites atuais — não habilitar dinheiro real
 
-- Testes da matemática 98%/2% com `BigInt`: aprovados.
-- Parsing/sintaxe de 16 arquivos TypeScript/TSX: aprovado.
-- Validação de JSON nos `package.json`: aprovada.
-- Integridade do ZIP: aprovada.
-- Build completo, Prisma validate/migrate e E2E: pendentes, pois as dependências do monorepo ainda não foram instaladas neste ambiente.
+- Nenhuma cobrança PIX real é emitida; os códigos existentes contêm `MOCK-PIX-NOT-PAYABLE`.
+- Nenhuma conversão BRL→USDT real é executada.
+- Nenhum payout on-chain é executado; os dois repasses 98%/2% ainda não foram homologados.
+- O contrato TransFi v3 não está integrado de ponta a ponta: falta onboarding dinâmico de sender/recipient, consulta dos campos obrigatórios por corredor, descoberta do método PIX brasileiro, criação/consulta de payin e os dois payouts independentes.
+- Foxbit depende de aprovação comercial e permissões específicas do Partner/Fiat Gateway, além de confirmação do caminho de saldo, sub-members, comissão e withdrawals.
+- Os formulários atuais não capturam todos os campos dinâmicos de KYC/KYB, endereço, nascimento e Travel Rule que podem ser exigidos pelo provedor escolhido.
+- Reconciliação e recuperação cobrem partes do fluxo, mas ainda não foram comprovadas com eventos e payouts reais do provedor.
+- Ainda faltam validação completa de produção, observabilidade, alertas operacionais, runbooks, segurança externa e revisão jurídica/regulatória/fiscal.
 
 ## Próximos desbloqueios
 
-1. Foxbit aprovar por escrito o arranjo multiusuário e o método exato de PIX para creditar cada merchant/sub-member.
-2. Foxbit confirmar funding BRL da subconta, compra BRL→USDT, transferência interna 2% e duas saídas para carteiras externas.
-3. Receber sandbox, API keys, permissões, webhook secret, limites, preços e redes habilitadas.
-4. Implementar e testar o adapter de produção com os schemas oficiais fornecidos/homologados.
-5. Revisão jurídica, regulatória, fiscal e de segurança antes de movimentar dinheiro real.
+1. Escolher o provedor primário e obter aprovação comercial por escrito para coleta PIX de terceiros, conversão BRL/USDT e dois payouts independentes por operação.
+2. Receber credenciais sandbox, IDs de conta/MID, permissões de payout, webhook secrets, métodos/corredores disponíveis, limites e tabela de tarifas.
+3. Implementar onboarding dinâmico de sender/recipient e persistência dos IDs do provedor, com KYC/KYB e Travel Rule.
+4. Implementar payin PIX, conversão e dois payouts separados (com partner IDs idempotentes independentes), além de consulta de status, webhooks e reconciliação.
+5. Homologar cenários de timeout, evento duplicado, payout parcialmente liquidado, falha terminal, reembolso e divergência de saldo.
+6. Concluir testes visuais/funcionais dos painéis, checkout, logout, exportações e permissões.
+7. Fazer revisão de segurança, jurídica, regulatória e fiscal; só então preparar implantação de produção e liberar operações reais.
+
+## Política operacional
+
+- Nunca configurar credenciais reais em repositório público ou em arquivos versionados.
+- Nunca trocar para `sandbox/live` para contornar bloqueios do adaptador.
+- Um pagamento só pode ser considerado finalizado após confirmação independente dos dois payouts, reconciliação do ledger e conferência do saldo do provedor.

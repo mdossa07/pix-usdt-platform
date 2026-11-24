@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
+import { buildCsv } from '../../lib/csv';
 
 interface Wallet {
   id: string;
@@ -366,7 +367,6 @@ export default function MerchantDashboard() {
   const exportCsv = () => {
     if (!payments.length) return;
     const headers = ['ID externo', 'Valor PIX (BRL)', 'Repasse comerciante (USDT)', 'Taxa PixSplit (USDT)', 'Status', 'Data'];
-    const escapeCell = (value: string) => '"' + value.replace(/"/g, '""') + '"';
     const rows = payments.map(payment => [
       payment.externalId,
       (Number(payment.amountBrlCents) / 100).toFixed(2),
@@ -374,9 +374,8 @@ export default function MerchantDashboard() {
       payment.commissionUsdt ?? '',
       payment.status,
       new Date(payment.createdAt).toISOString(),
-    ].map(value => escapeCell(String(value))).join(','));
-    const csv = [headers.map(escapeCell).join(','), ...rows].join('\r\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    ]);
+    const blob = new Blob([buildCsv([headers, ...rows])], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

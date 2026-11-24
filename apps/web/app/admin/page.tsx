@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
+import { buildCsv } from '../../lib/csv';
+import { calculateSettledCommissionUnits, formatUsdtUnits, getActionablePayments } from '../../lib/admin-metrics';
 
 interface PaymentRecord {
   id: string;
@@ -91,7 +93,14 @@ export default function AdminDashboard() {
         setAuditLogs(a);
         setWallets(w);
       })
-      .catch((err) => setError(err.message ?? 'Falha ao carregar dados'))
+      .catch((err) => {
+        if (err instanceof Error && err.message === 'unauthorized') {
+          localStorage.removeItem('pixsplit_token');
+          window.location.assign('/login');
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Falha ao carregar dados');
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -111,11 +120,9 @@ export default function AdminDashboard() {
     }
   };
 
-  const totalCommission = payments.reduce((acc, p) => acc + Number(p.commissionUsdt ?? 0), 0);
+  const totalCommission = calculateSettledCommissionUnits(payments);
   const completedCount = payments.filter(p => p.status === 'COMPLETED').length;
-  const stuckPayments = payments.filter(p =>
-    p.status !== 'COMPLETED' && p.status !== 'FAILED' && p.status !== 'PIX_PENDING'
-  );
+  const stuckPayments = getActionablePayments(payments);
 
   const handleRetrySettlement = async (paymentId: string) => {
     try {
@@ -172,11 +179,18 @@ export default function AdminDashboard() {
   };
 
   const exportCsv = () => {
-    const header = 'ID Externo,Status,Valor PIX,Comissão USDT,Merchant Net,Transfer Merchant,Transfer Platform,Criado Em\n';
-    const rows = payments.map(p =>
-      `${p.externalId},${p.status},${Number(p.amountBrlCents)/100},${p.commissionUsdt ?? ''},${p.merchantNetUsdt ?? ''},${p.merchantTransferStatus ?? ''},${p.platformTransferStatus ?? ''},${p.createdAt}`
-    ).join('\n');
-    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const header = ['ID Externo', 'Status', 'Valor PIX', 'Comissão USDT', 'Merchant Net', 'Transfer Merchant', 'Transfer Platform', 'Criado Em'];
+    const rows = payments.map(p => [
+      p.externalId,
+      p.status,
+      Number(p.amountBrlCents) / 100,
+      p.commissionUsdt ?? '',
+      p.merchantNetUsdt ?? '',
+      p.merchantTransferStatus ?? '',
+      p.platformTransferStatus ?? '',
+      p.createdAt,
+    ]);
+    const blob = new Blob([buildCsv([header, ...rows])], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -224,8 +238,8 @@ export default function AdminDashboard() {
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white border border-slate-200 rounded-xl p-5">
-              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Comissão Acumulada</p>
-              <p className="text-2xl font-bold text-emerald-700">{totalCommission.toFixed(4)} USDT</p>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Comissão liquidada</p>
+              <p className="text-2xl font-bold text-emerald-700">{formatUsdtUnits(totalCommission)} USDT</p>
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Transações Totais</p>
