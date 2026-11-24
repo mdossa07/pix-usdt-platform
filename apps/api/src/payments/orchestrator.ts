@@ -354,7 +354,7 @@ export class PaymentOrchestrator {
     }
 
     const currentAttempt = existing;
-    if (currentAttempt?.providerWithdrawalSn) {
+    if (currentAttempt && (currentAttempt.providerWithdrawalSn || currentAttempt.status === TransferStatus.SUBMITTED)) {
       if (!this.provider.getTransferStatus) {
         await this.prisma.payment.update({
           where: { id: paymentId },
