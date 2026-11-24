@@ -172,25 +172,30 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
-          await this.prisma.$transaction(async (tx) => {
-            const changed = await tx.transfer.updateMany({
+          const changed = await this.prisma.$transaction(async (tx) => {
+            const transferUpdate = await tx.transfer.updateMany({
               where: { id: currentAttempt.id, status: { not: TransferStatus.COMPLETED } },
               data: {
                 status: TransferStatus.FAILED,
                 providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
               },
             });
-            if (changed.count === 1) {
+            if (transferUpdate.count === 1) {
               await tx.payment.updateMany({
                 where: { id: paymentId, merchantTransferStatus: { not: TransferStatus.COMPLETED } },
                 data: { merchantTransferStatus: TransferStatus.FAILED },
               });
             }
+            return transferUpdate.count;
           });
+          if (changed !== 1) {
+            await this.syncPaymentGlobalStatus(paymentId);
+            return;
+          }
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
-          await this.prisma.$transaction(async (tx) => {
-            const changed = await tx.transfer.updateMany({
+          const changed = await this.prisma.$transaction(async (tx) => {
+            const transferUpdate = await tx.transfer.updateMany({
               where: {
                 id: currentAttempt.id,
                 status: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
@@ -200,7 +205,7 @@ export class PaymentOrchestrator {
                 providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
               },
             });
-            if (changed.count === 1) {
+            if (transferUpdate.count === 1) {
               await tx.payment.updateMany({
                 where: {
                   id: paymentId,
@@ -209,7 +214,9 @@ export class PaymentOrchestrator {
                 data: { merchantTransferStatus: TransferStatus.PROCESSING },
               });
             }
+            return transferUpdate.count;
           });
+          if (changed !== 1) await this.syncPaymentGlobalStatus(paymentId);
           return;
         } else if (remoteStatus === null) {
           // A missing order is not proof that the provider did not accept the
@@ -402,25 +409,30 @@ export class PaymentOrchestrator {
           return;
         }
         if (remoteStatus?.status === 'FAILED') {
-          await this.prisma.$transaction(async (tx) => {
-            const changed = await tx.transfer.updateMany({
+          const changed = await this.prisma.$transaction(async (tx) => {
+            const transferUpdate = await tx.transfer.updateMany({
               where: { id: currentAttempt.id, status: { not: TransferStatus.COMPLETED } },
               data: {
                 status: TransferStatus.FAILED,
                 providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
               },
             });
-            if (changed.count === 1) {
+            if (transferUpdate.count === 1) {
               await tx.payment.updateMany({
                 where: { id: paymentId, platformTransferStatus: { not: TransferStatus.COMPLETED } },
                 data: { platformTransferStatus: TransferStatus.FAILED },
               });
             }
+            return transferUpdate.count;
           });
+          if (changed !== 1) {
+            await this.syncPaymentGlobalStatus(paymentId);
+            return;
+          }
           existing = { ...currentAttempt, status: TransferStatus.FAILED };
         } else if (remoteStatus?.status === 'PENDING') {
-          await this.prisma.$transaction(async (tx) => {
-            const changed = await tx.transfer.updateMany({
+          const changed = await this.prisma.$transaction(async (tx) => {
+            const transferUpdate = await tx.transfer.updateMany({
               where: {
                 id: currentAttempt.id,
                 status: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PENDING_TRAVEL_RULE, TransferStatus.PROCESSING] },
@@ -430,7 +442,7 @@ export class PaymentOrchestrator {
                 providerWithdrawalSn: remoteStatus.providerReference ?? currentAttempt.providerWithdrawalSn,
               },
             });
-            if (changed.count === 1) {
+            if (transferUpdate.count === 1) {
               await tx.payment.updateMany({
                 where: {
                   id: paymentId,
@@ -439,7 +451,9 @@ export class PaymentOrchestrator {
                 data: { platformTransferStatus: TransferStatus.PROCESSING },
               });
             }
+            return transferUpdate.count;
           });
+          if (changed !== 1) await this.syncPaymentGlobalStatus(paymentId);
           return;
         } else if (remoteStatus === null) {
           await this.prisma.payment.update({
