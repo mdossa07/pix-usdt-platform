@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import WorkspaceShell from '../../components/workspace-shell';
+import { buildCsv } from '../../lib/csv';
 
 interface PaymentRecord {
   id: string;
@@ -172,11 +173,18 @@ export default function AdminDashboard() {
   };
 
   const exportCsv = () => {
-    const header = 'ID Externo,Status,Valor PIX,Comissão USDT,Merchant Net,Transfer Merchant,Transfer Platform,Criado Em\n';
-    const rows = payments.map(p =>
-      `${p.externalId},${p.status},${Number(p.amountBrlCents)/100},${p.commissionUsdt ?? ''},${p.merchantNetUsdt ?? ''},${p.merchantTransferStatus ?? ''},${p.platformTransferStatus ?? ''},${p.createdAt}`
-    ).join('\n');
-    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const header = ['ID Externo', 'Status', 'Valor PIX', 'Comissão USDT', 'Merchant Net', 'Transfer Merchant', 'Transfer Platform', 'Criado Em'];
+    const rows = payments.map(p => [
+      p.externalId,
+      p.status,
+      Number(p.amountBrlCents) / 100,
+      p.commissionUsdt ?? '',
+      p.merchantNetUsdt ?? '',
+      p.merchantTransferStatus ?? '',
+      p.platformTransferStatus ?? '',
+      p.createdAt,
+    ]);
+    const blob = new Blob([buildCsv([header, ...rows])], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
