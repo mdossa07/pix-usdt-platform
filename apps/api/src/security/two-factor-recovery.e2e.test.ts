@@ -16,6 +16,7 @@ describe('admin TOTP recovery code consumption', () => {
         fullName: 'TOTP Recovery Test',
         role: 'SUPER_ADMIN',
         isActive: true,
+        twoFactorEnabledAt: new Date(),
       },
     });
     userId = user.id;
