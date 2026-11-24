@@ -65,25 +65,25 @@ function generateCode(secret: string, counter: number): string {
   return String(binary % CODE_RANGE).padStart(DIGITS, '0');
 }
 
-export function verifyTotp(
+export function matchTotpCounter(
   secret: string,
   suppliedCode: string,
   nowMs = Date.now(),
   window = 1,
-): boolean {
-  if (!/^\d{6}$/.test(suppliedCode)) return false;
+): number | null {
+  if (!/^\\d{6}$/.test(suppliedCode)) return null;
   if (!Number.isFinite(nowMs) || nowMs < 0 || !Number.isInteger(window) || window < 0 || window > 2) {
-    return false;
+    return null;
   }
 
   let key: Buffer;
   try {
     key = decodeBase32(secret);
   } catch {
-    return false;
+    return null;
   }
 
-  if (key.length < 16) return false;
+  if (key.length < 16) return null;
 
   const currentCounter = Math.floor(nowMs / 1000 / STEP_SECONDS);
   const supplied = Buffer.from(suppliedCode, 'ascii');
@@ -91,9 +91,13 @@ export function verifyTotp(
     const candidateCounter = currentCounter + drift;
     if (candidateCounter < 0) continue;
     const expected = Buffer.from(generateCode(secret, candidateCounter), 'ascii');
-    if (timingSafeEqual(expected, supplied)) return true;
+    if (timingSafeEqual(expected, supplied)) return candidateCounter;
   }
-  return false;
+  return null;
+}
+
+export function verifyTotp(secret: string, suppliedCode: string, nowMs = Date.now(), window = 1): boolean {
+  return matchTotpCounter(secret, suppliedCode, nowMs, window) !== null;
 }
 
 export function buildTotpProvisioningUri(account: string, secret: string, issuer = 'PixSplit'): string {
