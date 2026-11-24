@@ -155,8 +155,8 @@ test('creates v3 orders with partnerId in the body and rejects ambiguous amount 
   const headers = new Headers(calls[0]?.init?.headers);
   assert.equal(headers.get('idempotency-key'), null);
 
-  await assert.rejects(
-    client.createOrder({
+  assert.throws(
+    () => client.createOrder({
       ...order,
       source: { currency: 'BRL', amount: '100.00' },
       destination: { currency: 'USDT', amount: '98.00' },
@@ -176,10 +176,10 @@ test('requires partnerId, purposeCode and userId on customer payin/payout orders
     destination: { currency: 'USDT', amount: '10', network: 'polygon' },
   };
 
-  await assert.rejects(client.createOrder({ ...base, partnerId: '' }), /invalid_transfi_partner_id/);
-  await assert.rejects(client.createOrder({ ...base, purposeCode: '' }), /transfi_purpose_code_required/);
-  await assert.rejects(client.createOrder({ ...base, userId: undefined }), /transfi_user_id_required/);
-  await assert.rejects(client.createOrder({ ...base, purposeCode: 'other' }), /transfi_purpose_code_reason_required/);
+  assert.throws(() => client.createOrder({ ...base, partnerId: '' }), /invalid_transfi_partner_id/);
+  assert.throws(() => client.createOrder({ ...base, purposeCode: '' }), /transfi_purpose_code_required/);
+  assert.throws(() => client.createOrder({ ...base, userId: undefined }), /transfi_user_id_required/);
+  assert.throws(() => client.createOrder({ ...base, purposeCode: 'other' }), /transfi_purpose_code_reason_required/);
 });
 
 test('gets order, lists orders and checks available balance via v3 endpoints', async () => {
@@ -197,7 +197,7 @@ test('gets order, lists orders and checks available balance via v3 endpoints', a
   ]);
   assert.equal(new URL(calls[2]!.url).searchParams.get('status'), 'asset_settled');
   assert.equal(new URL(calls[3]!.url).searchParams.get('currency'), 'USDT');
-  await assert.rejects(client.getOrder('not-an-order'), /invalid_transfi_order_id/);
+  assert.throws(() => client.getOrder('not-an-order'), /invalid_transfi_order_id/);
 });
 
 test('starts hosted KYC and KYB and checks role-level verification status', async () => {
