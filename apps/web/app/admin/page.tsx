@@ -92,7 +92,14 @@ export default function AdminDashboard() {
         setAuditLogs(a);
         setWallets(w);
       })
-      .catch((err) => setError(err.message ?? 'Falha ao carregar dados'))
+      .catch((err) => {
+        if (err instanceof Error && err.message === 'unauthorized') {
+          localStorage.removeItem('pixsplit_token');
+          window.location.assign('/login');
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Falha ao carregar dados');
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
