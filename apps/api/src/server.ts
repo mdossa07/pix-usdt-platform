@@ -203,7 +203,6 @@ app.post('/v1/auth/2fa/verify', {
   } else if (isRecoveryCode(parsed.data.code)) {
     const consumed = await consumeRecoveryCode(prisma, user.id, parsed.data.code);
     if (!consumed) return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     factorType = 'RECOVERY';
   } else {
     return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
