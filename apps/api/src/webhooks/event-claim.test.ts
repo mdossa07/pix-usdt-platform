@@ -2,7 +2,6 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { claimWebhookEvent, completeWebhookEvent } from './event-claim.js';
 
-const admin = new PrismaClient();
 const schema = new URL(process.env.DATABASE_URL!);
 schema.searchParams.set('schema', 'webhook_test');
 const db = new PrismaClient({ datasources: { db: { url: schema.toString() } } });
@@ -12,7 +11,6 @@ const encrypted = 'test-encrypted-payload';
 afterAll(async () => {
   await db.webhookEvent.deleteMany({ where: { provider } });
   await db.$disconnect();
-  await admin.$disconnect();
 });
 
 describe('webhook event claims', () => {
