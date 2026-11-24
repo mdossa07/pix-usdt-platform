@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rawBody from 'fastify-raw-body';
 import { PrismaClient } from '@prisma/client';
-import { createHmacAuthMiddleware, generateMerchantApiKey, signRequest } from './hmac-auth.js';
+import { createHmacAuthMiddleware, createRequestNonce, generateMerchantApiKey, signRequest } from './hmac-auth.js';
 
 const adminPrisma = new PrismaClient();
 let prisma: PrismaClient;
@@ -65,7 +65,7 @@ describe('HMAC Authentication', () => {
     await adminPrisma.$disconnect();
   });
 
-  async function sendSignedRequest(signature: string, timestamp = Date.now(), body = JSON.stringify({ amount: 100 })) {
+  async function sendSignedRequest(signature: string, timestamp = Date.now(), body = JSON.stringify({ amount: 100 }), nonce = createRequestNonce()) {
     return app.inject({
       method: 'POST',
       url: '/test',
@@ -73,6 +73,7 @@ describe('HMAC Authentication', () => {
         'x-pixsplit-key-id': keyId,
         'x-pixsplit-timestamp': String(timestamp),
         'x-pixsplit-signature': signature,
+        'x-pixsplit-nonce': nonce,
         'content-type': 'application/json',
       },
       payload: body,
@@ -82,8 +83,9 @@ describe('HMAC Authentication', () => {
   it('A. Authenticates a valid request using the original API secret', async () => {
     const timestamp = Date.now();
     const body = JSON.stringify({ amount: 100 });
-    const signature = signRequest(secret, merchantId, 'POST', '/test', timestamp, body);
-    const response = await sendSignedRequest(signature, timestamp, body);
+    const testNonce = createRequestNonce();
+    const signature = signRequest(secret, merchantId, 'POST', '/test', timestamp, body, testNonce);
+    const response = await sendSignedRequest(signature, timestamp, body, testNonce);
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true, merchantId });
