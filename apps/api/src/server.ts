@@ -14,6 +14,7 @@ import { encryptPii, decryptPii } from './security/crypto.js';
 import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from './security/totp.js';
 import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecoveryCode } from './security/two-factor-recovery.js';
 import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
+import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -42,9 +43,18 @@ const sessionCookieOptions = {
   maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
 };
 
-function issueBrowserSession(reply: FastifyReply, user: { id: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT' }): string {
+function issueBrowserSession(
+  reply: FastifyReply,
+  user: { id: string; role: 'SUPER_ADMIN' | 'ADMIN' | 'MERCHANT' },
+  options: { twoFactorVerified?: boolean } = {},
+): string {
   const csrfToken = randomBytes(32).toString('hex');
-  const token = app.jwt.sign({ sub: user.id, role: user.role, csrfToken });
+  const token = app.jwt.sign({
+    sub: user.id,
+    role: user.role,
+    csrfToken,
+    twoFactorVerified: options.twoFactorVerified === true,
+  });
   reply.header('Set-Cookie', buildSessionCookieHeader(token, sessionCookieOptions));
   return csrfToken;
 }
@@ -89,7 +99,12 @@ app.decorate('authenticate', async (request, reply) => {
 
   const currentUser = await prisma.user.findUnique({
     where: { id: request.user.sub },
-    select: { isActive: true, role: true },
+    select: {
+      isActive: true,
+      role: true,
+      twoFactorEnabledAt: true,
+      twoFactorSecretEncrypted: true,
+    },
   });
   if (!currentUser?.isActive) {
     await reply.code(401).send({ error: 'unauthorized' });
@@ -98,6 +113,18 @@ app.decorate('authenticate', async (request, reply) => {
 
   // Reflect role changes immediately instead of trusting a stale JWT role.
   request.user.role = currentUser.role;
+
+  const mfaError = getAdminMfaGuardError({
+    role: currentUser.role,
+    twoFactorEnabled: Boolean(currentUser.twoFactorEnabledAt && currentUser.twoFactorSecretEncrypted),
+    sessionTwoFactorVerified: request.user.twoFactorVerified === true,
+    method: request.method,
+    url: request.url,
+  });
+  if (mfaError) {
+    await reply.code(mfaError === 'two_factor_required' ? 401 : 403).send({ error: mfaError });
+    return;
+  }
 });
 
 function userId(request: FastifyRequest) { return request.user.sub; }
@@ -248,7 +275,7 @@ app.post('/v1/auth/2fa/verify', {
     return reply.code(401).send({ error: 'invalid_or_replayed_two_factor_code' });
   }
 
-  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role });
+  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
   await prisma.auditEvent.create({
     data: {
       actorUserId: user.id,
@@ -375,7 +402,8 @@ app.post('/v1/admin/2fa/enable', {
   if (!enabled) return reply.code(409).send({ error: 'two_factor_setup_changed' });
 
   await audit(request, 'ADMIN_2FA_ENABLED', 'USER', user.id, { enabledAt: enabledAt.toISOString(), recoveryCodesIssued: recoveryCodes.length });
-  return { enabled: true, enabledAt, recoveryCodes };
+  const csrfToken = issueBrowserSession(reply, { id: user.id, role: user.role }, { twoFactorVerified: true });
+  return { enabled: true, enabledAt, recoveryCodes, csrfToken };
 });
 
 app.post('/v1/admin/2fa/recovery-codes/regenerate', {
