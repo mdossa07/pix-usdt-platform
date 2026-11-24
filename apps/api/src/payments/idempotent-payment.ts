@@ -8,6 +8,7 @@ export interface CreatePaymentIdempotentlyInput {
   actorUserId: string;
   walletDestinationId: string;
   amountBrlCents: number;
+  commissionBps: number;
   description?: string;
   idempotencyKey: string;
   ipAddress: string;
@@ -121,7 +122,7 @@ export async function createPaymentIdempotently(
           walletDestinationId: input.walletDestinationId,
           amountBrlCents: BigInt(input.amountBrlCents),
           description: input.description,
-          commissionBps: 200,
+          commissionBps: input.commissionBps,
           pixCopyPaste: `MOCK-PIX-NOT-PAYABLE:${externalId}`,
           expiresAt,
         },
