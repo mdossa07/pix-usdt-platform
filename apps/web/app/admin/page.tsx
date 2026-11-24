@@ -132,6 +132,7 @@ export default function AdminDashboard() {
       .catch((err) => {
         if (err instanceof Error && err.message === 'unauthorized') {
           localStorage.removeItem('pixsplit_authenticated');
+          localStorage.removeItem('pixsplit_token');
           sessionStorage.removeItem('pixsplit_csrf');
           window.location.assign('/login');
           return;
