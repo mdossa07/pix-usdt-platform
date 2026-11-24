@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
  * provider factory and config guard are additional layers, not the only ones.
  */
 export class FoxbitAdapter implements PaymentProvider {
-  constructor(private readonly mode: 'mock' | 'sandbox' | 'live') {
+  constructor(mode: 'mock' | 'sandbox' | 'live') {
     if (mode !== 'mock') {
       throw new Error(
         'FOXBIT_ADAPTER_NOT_HOMOLOGATED: do not create partner orders or withdrawals before written product approval and end-to-end sandbox certification.',
@@ -55,7 +55,7 @@ export class FoxbitAdapter implements PaymentProvider {
     if (!providerTransferId?.startsWith('mock-')) return null;
     return {
       status: 'COMPLETED',
-      providerReference: providerTransferId || idempotencyKey,
+      providerReference: providerTransferId,
     };
   }
 
