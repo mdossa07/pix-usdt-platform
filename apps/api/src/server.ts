@@ -52,18 +52,28 @@ function validateAddress(network: string, address: string) {
 }
 
 app.get('/health', async () => ({ status: 'ok', mode: 'mock', foxbitIntegration: 'pending_partner_approval', livePayments: false }));
-app.get('/v1/provider/status', async () => ({
-  provider: config.PAYMENT_PROVIDER.toUpperCase(),
-  enabled: false,
-  adapterReady: false,
-  credentialsConfigured: config.PAYMENT_PROVIDER === 'transfi'
-    ? Boolean(config.TRANSFI_USERNAME && config.TRANSFI_PASSWORD && config.TRANSFI_MID && config.TRANSFI_WEBHOOK_SECRET)
-    : Boolean(config.FOXBIT_API_KEY && config.FOXBIT_API_SECRET && config.FOXBIT_WEBHOOK_SECRET),
-  connection: 'INTEGRATION_PENDING',
-  paymentsMode: config.PAYMENTS_MODE,
-  liveOperationsEnabled: false,
-  pendingApprovals: ['aprovação comercial para pagamentos PIX de terceiros', 'confirmação do fluxo de conversão BRL/USDT', 'provisionamento e identificação de beneficiários', 'aprovação de Travel Rule', 'dois payouts USDT independentes por pagamento', 'testes sandbox de falhas parciais e conciliação'],
-}));
+app.get('/v1/admin/provider-status', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  return {
+    provider: config.PAYMENT_PROVIDER.toUpperCase(),
+    enabled: false,
+    adapterReady: false,
+    credentialsConfigured: config.PAYMENT_PROVIDER === 'transfi'
+      ? Boolean(config.TRANSFI_USERNAME && config.TRANSFI_PASSWORD && config.TRANSFI_MID && config.TRANSFI_WEBHOOK_SECRET)
+      : Boolean(config.FOXBIT_API_KEY && config.FOXBIT_API_SECRET && config.FOXBIT_WEBHOOK_SECRET),
+    connection: 'INTEGRATION_PENDING',
+    paymentsMode: config.PAYMENTS_MODE,
+    liveOperationsEnabled: false,
+    pendingApprovals: [
+      'aprovação comercial para pagamentos PIX de terceiros',
+      'confirmação do fluxo de conversão BRL/USDT',
+      'provisionamento e identificação de beneficiários',
+      'aprovação de Travel Rule',
+      'dois payouts USDT independentes por pagamento',
+      'testes sandbox de falhas parciais e conciliação',
+    ],
+  };
+});
 
 const mockFinancialExecutionEnabled = canRunMockFinancialExecution(config.NODE_ENV, config.PAYMENTS_MODE);
 
