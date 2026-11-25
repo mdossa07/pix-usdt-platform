@@ -20,6 +20,19 @@ interface PaymentRecord {
   transfers: Array<{ kind: string; status: string; amountUsdt: string; txHash: string | null }>;
 }
 
+interface PendingReservationRecord {
+  id: string;
+  externalId: string;
+  merchantId: string | null;
+  merchantName: string | null;
+  merchantEmail: string | null;
+  amountBrlCents: string | null;
+  walletDestinationId: string | null;
+  createdAt: string;
+  lastReviewedAt: string | null;
+  reviewNote: string | null;
+}
+
 interface MerchantRecord {
   id: string;
   legalName: string;
@@ -90,6 +103,8 @@ type Tab = 'overview' | 'merchants' | 'wallets' | 'reconciliation' | 'audit';
 export default function AdminDashboard() {
   const [tab, setTab] = useState<Tab>('overview');
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [pendingReservations, setPendingReservations] = useState<PendingReservationRecord[]>([]);
+  const [reservationReviewBusy, setReservationReviewBusy] = useState(false);
   const [merchants, setMerchants] = useState<MerchantRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [wallets, setWallets] = useState<WalletReviewRecord[]>([]);
@@ -121,14 +136,15 @@ export default function AdminDashboard() {
           setTab('overview');
           return null;
         }
-        const [p, m, a, w, provider] = await Promise.all([
+        const [p, m, a, w, provider, reservations] = await Promise.all([
           apiRequest<PaymentRecord[]>('/v1/admin/payments', {}, token),
           apiRequest<MerchantRecord[]>('/v1/admin/merchants', {}, token),
           apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token),
           apiRequest<WalletReviewRecord[]>('/v1/admin/wallets', {}, token),
           apiRequest<ProviderStatus>('/v1/admin/provider-status', {}, token),
+          apiRequest<PendingReservationRecord[]>('/v1/admin/payment-reservations/pending', {}, token),
         ]);
-        return { p, m, a, w, provider };
+        return { p, m, a, w, provider, reservations };
       })
       .then((data) => {
         if (!data) return;
@@ -137,6 +153,7 @@ export default function AdminDashboard() {
         setAuditLogs(data.a);
         setWallets(data.w);
         setProviderStatus(data.provider);
+        setPendingReservations(data.reservations);
       })
       .catch((err) => {
         if (err instanceof Error && ['unauthorized', 'two_factor_required'].includes(err.message)) {
@@ -170,6 +187,37 @@ export default function AdminDashboard() {
   const totalCommission = calculateSettledCommissionUnits(payments);
   const completedCount = payments.filter(p => p.status === 'COMPLETED').length;
   const stuckPayments = getActionablePayments(payments);
+
+  const handleReviewPendingReservation = async (reservationId: string) => {
+    const note = window.prompt(
+      'Registre o que foi conferido no portal do provedor. Não inclua CPF, senhas, tokens ou segredos. A reserva continuará bloqueada.',
+    );
+    if (!note?.trim()) return;
+    if (note.trim().length < 10) {
+      alert('Registre pelo menos 10 caracteres para documentar a análise.');
+      return;
+    }
+    if (!window.confirm('Registrar a revisão manual? Esta ação não libera a referência nem autoriza nova cobrança.')) return;
+
+    setReservationReviewBusy(true);
+    try {
+      await apiRequest('/v1/admin/payment-reservations/' + reservationId + '/review', {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }, token!);
+      const [pending, audit] = await Promise.all([
+        apiRequest<PendingReservationRecord[]>('/v1/admin/payment-reservations/pending', {}, token!),
+        apiRequest<AuditEntry[]>('/v1/admin/audit', {}, token!),
+      ]);
+      setPendingReservations(pending);
+      setAuditLogs(audit);
+      alert('Revisão registrada. A reserva permanece bloqueada até confirmação confiável do provedor.');
+    } catch (err) {
+      alert('Erro ao registrar revisão: ' + (err as Error).message);
+    } finally {
+      setReservationReviewBusy(false);
+    }
+  };
 
   const handleRetrySettlement = async (paymentId: string) => {
     try {
@@ -736,6 +784,81 @@ export default function AdminDashboard() {
               </table>
             </div>
           )}
+          <section className="space-y-4" aria-labelledby="pending-reservations-heading">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 id="pending-reservations-heading" className="text-lg font-semibold text-slate-900">Reservas HMAC sem cobrança persistida</h3>
+                <p className="text-sm text-slate-600">Referências que ficaram bloqueadas antes da criação de uma linha Payment e aguardam conferência externa</p>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setPendingReservations(await apiRequest<PendingReservationRecord[]>('/v1/admin/payment-reservations/pending', {}, token!));
+                  } catch (err) {
+                    alert('Erro ao atualizar fila: ' + (err as Error).message);
+                  }
+                }}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Atualizar fila
+              </button>
+            </div>
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+              <strong>{pendingReservations.length} reserva(s) pendente(s).</strong> A fila não confirma o status no provedor. Consulte a referência no canal oficial do provedor e registre o resultado. Registrar uma revisão não apaga nem libera a reserva e não dispara outra cobrança.
+            </div>
+            {pendingReservations.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                Nenhuma reserva HMAC antiga sem resposta armazenada.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">Referência externa</th>
+                      <th className="px-4 py-3">Comerciante</th>
+                      <th className="px-4 py-3">Valor</th>
+                      <th className="px-4 py-3">Criada em</th>
+                      <th className="px-4 py-3">Última revisão</th>
+                      <th className="px-4 py-3">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pendingReservations.map(reservation => (
+                      <tr key={reservation.id} className="align-top">
+                        <td className="px-4 py-3 font-mono text-xs text-slate-800" title={reservation.externalId}>
+                          <span className="break-all">{reservation.externalId}</span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-700">
+                          {reservation.merchantName ?? 'Registro legado'}
+                          <div className="mt-1 text-slate-500">{reservation.merchantEmail ?? 'Dados do comerciante indisponíveis nesta reserva antiga'}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-800">
+                          {reservation.amountBrlCents ? formatBrl(reservation.amountBrlCents) : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-600">{new Date(reservation.createdAt).toLocaleString('pt-BR')}</td>
+                        <td className="px-4 py-3 text-xs text-slate-600">
+                          {reservation.lastReviewedAt ? new Date(reservation.lastReviewedAt).toLocaleString('pt-BR') : 'Ainda não revisada'}
+                          {reservation.reviewNote && <p className="mt-1 max-w-xs whitespace-normal text-slate-500">{reservation.reviewNote}</p>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            disabled={reservationReviewBusy}
+                            onClick={() => handleReviewPendingReservation(reservation.id)}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Registrar revisão
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
       )}
 
