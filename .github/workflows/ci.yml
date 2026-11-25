@@ -54,7 +54,7 @@ jobs:
             printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
           done
       - name: Audit dependency vulnerabilities
-        run: pnpm audit --audit-level high
+        run: pnpm audit --audit-level moderate
       - name: Validate Prometheus configuration and alert rules
         run: |
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
