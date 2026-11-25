@@ -21,6 +21,8 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] CI com lint/typecheck, unitários, integrações PostgreSQL, migrações, build e E2E Chromium de comerciante e superadministrador.
 - [x] Guard do painel superadmin por cookie HttpOnly, validação server-side do papel e logout com revogação (PR #22).
 - [x] Retry manual de entregas de webhook `FAILED`, com ownership, compare-and-set, rate limit, auditoria e preservação do evento/payload (PR #23).
+- [x] Gitleaks com varredura de histórico e CodeQL `security-extended` para JavaScript/TypeScript (PR #25).
+- [x] Segredos temporários e mascarados gerados a cada execução do CI, sem valores fixos no workflow (PR #25).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
