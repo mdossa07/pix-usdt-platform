@@ -25,6 +25,10 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Segredos temporários e mascarados gerados a cada execução do CI, sem valores fixos no workflow (PR #25).
 - [x] Dependências JWT/Prisma corrigidas, lockfile congelado e `pnpm audit --audit-level moderate` obrigatório e aprovado (PR #28).
 - [x] Dependabot semanal para npm (monorepo), GitHub Actions e Docker Compose (PR #28).
+- [x] Atualização de Argon2 para `0.45.2` (PR #36).
+- [x] Limite de dez endpoints webhook ativos por comerciante aplicado atomicamente na criação e reativação, com tratamento de conflitos SERIALIZABLE e testes concorrentes PostgreSQL (PR #37).
+- [x] Prometheus atualizado para `v3.16.0` e Grafana para `13.3.1`, com smoke tests de scrape/provisioning (PRs #29 e #31).
+- [x] GitHub Actions `checkout` e `setup-node` atualizadas para `v7`; `pnpm/action-setup` atualizado para `v6` (PRs #32, #33 e #38).
 - [x] Workflow Dependency Review preparado; sua ativação automática aguarda o proprietário habilitar Dependency Graph nas configurações do GitHub (PR #28).
 - [x] Runbook operacional inicial.
 
@@ -33,6 +37,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [ ] Tornar o repositório Private e revisar o histórico em busca de segredos/dados reais.
 - [ ] Ativar proteção de branch e exigir CI aprovado antes de merge.
 - [ ] Habilitar Dependency Graph no GitHub e mudar `.github/workflows/dependency-review.yml` de `workflow_dispatch` para `pull_request`.
+- [ ] Preparar backup e procedimento de migração/upgrade de volume PostgreSQL antes de integrar a atualização major da imagem 16→18 (PR #30).
 - [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace.
 - [ ] Confirmar por escrito o payin PIX de terceiros, funding/ownership de saldo, conversão BRL→USDT e os dois payouts independentes.
 - [ ] Receber sandbox, MIDs, permissões, webhooks e limites/tarifas documentados.
