@@ -40,9 +40,9 @@ export function validateAlertmanagerWebhookUrlFile(filePath) {
 function main() {
   try {
     validateAlertmanagerWebhookUrlFile(process.env.ALERTMANAGER_WEBHOOK_URL_FILE);
-    process.stdout.write('Alertmanager webhook URL file is valid (HTTPS).\\n');
+    process.stdout.write('Alertmanager webhook URL file is valid (HTTPS).\n');
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : 'ALERTMANAGER_WEBHOOK_URL_INVALID'}\\n`);
+    process.stderr.write(`${error instanceof Error ? error.message : 'ALERTMANAGER_WEBHOOK_URL_INVALID'}\n`);
     process.exitCode = 1;
   }
 }
