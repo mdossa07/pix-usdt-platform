@@ -15,5 +15,12 @@
     "db:migrate": "pnpm --filter @pixsplit/api db:migrate",
     "db:migrate:dev": "pnpm --filter @pixsplit/api db:migrate:dev",
     "db:studio": "pnpm --filter @pixsplit/api db:studio"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-jwt": "6.3.7",
+      "deepmerge-ts": "8.0.0",
+      "effect": "3.22.1"
+    }
   }
 }
