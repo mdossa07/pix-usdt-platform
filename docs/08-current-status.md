@@ -130,7 +130,7 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - PR #23: comerciante pode reativar o próprio endpoint e reenfileirar apenas entregas `FAILED`; mantém o mesmo `eventId` e payload, valida ownership, usa compare-and-set, limita tentativas e grava auditoria.
 - Ambos os recursos estão integrados em `master`; CI de PR #22 e pós-merge de PR #23 aprovados.
 
-**Progresso global estimado: 73%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
+**Progresso global estimado: 74%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
 
 
 ## Entrega validada — segurança automatizada do repositório — 25/11/2026
