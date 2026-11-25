@@ -19,12 +19,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://pixsplit_test:pixsplit_test_pass@localhost:5433/pixsplit_test?schema=public
       JWT_SECRET: pixsplit-test-jwt-secret-at-least-32-characters
       PII_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       APP_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -36,9 +46,47 @@ jobs:
       - run: cp .env.example .env
       - run: pnpm db:generate
       - run: pnpm lint
+      - name: Check Chromium E2E script syntax
+        run: node --check apps/api/scripts/browser-auth-e2e.mjs
       - run: pnpm test
       - name: Prepare integration database
         run: pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
+      - name: Start API and web apps for browser authentication E2E
+        run: |
+          nohup pnpm --filter @pixsplit/api exec tsx src/server.ts >/tmp/pixsplit-api.log 2>&1 &
+          nohup pnpm --filter @pixsplit/web exec next dev -p 3000 >/tmp/pixsplit-web.log 2>&1 &
+          api_ready=false
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail http://127.0.0.1:4000/health >/dev/null; then
+              api_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$api_ready" != "true" ]; then
+            cat /tmp/pixsplit-api.log
+            exit 1
+          fi
+          web_ready=false
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail http://127.0.0.1:3000/register >/dev/null; then
+              web_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$web_ready" != "true" ]; then
+            cat /tmp/pixsplit-api.log
+            cat /tmp/pixsplit-web.log
+            exit 1
+          fi
+      - name: Run Chromium browser authentication E2E
+        run: |
+          mkdir -p /tmp/pixsplit-playwright
+          printf '{"private":true,"dependencies":{"playwright":"1.65.1"}}\n' >/tmp/pixsplit-playwright/package.json
+          pnpm --dir /tmp/pixsplit-playwright install --no-frozen-lockfile
+          pnpm --dir /tmp/pixsplit-playwright exec playwright install --with-deps chromium
+          PLAYWRIGHT_PACKAGE_PATH=/tmp/pixsplit-playwright/node_modules/playwright node apps/api/scripts/browser-auth-e2e.mjs
       - name: Prepare isolated auth session schema
         run: |
           pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS auth_session_test;'
