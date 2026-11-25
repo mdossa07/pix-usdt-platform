@@ -41,6 +41,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Política global de cache para a API administrativa e redação de histórico: hook `onSend` garante `Cache-Control: no-store`/`Pragma: no-cache` em todas as rotas `/v1/admin/*`; notas livres históricas de revisão são removidas do payload de auditoria sem apagar o registro ou os metadados não textuais (PR #61; CI 47/47, Gitleaks e CodeQL aprovados).
 - [x] Política global de cache para toda a API versionada: hook `onSend` garante `Cache-Control: no-store`/`Pragma: no-cache` em respostas `/v1/*`, incluindo autenticação, sessões, perfil, comerciantes e checkout, sem modificar `/health`, `/metrics` ou arquivos estáticos (PR #62; CI 47/47, Gitleaks e CodeQL aprovados no SHA da PR).
 - [x] Minimização do metadata de auditoria de carteiras: evento `WALLET_REGISTERED` não armazena mais o texto livre `exchangeName`; a API remove valores históricos do payload de auditoria e acrescenta `exchangeNameRedacted`, preservando rede e tipo (PR #64; CI 47/47, Gitleaks e CodeQL aprovados no SHA da PR).
+- [x] Origens públicas HTTPS obrigatórias em produção: `APP_URL` e `NEXT_PUBLIC_API_URL` rejeitam HTTP/inválidos; o CI usa placeholder HTTPS somente no build e mantém HTTP local para desenvolvimento/teste (PR #63; integrada em `80276dbc`; CI push e pull request 47/47, Gitleaks e CodeQL aprovados).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
