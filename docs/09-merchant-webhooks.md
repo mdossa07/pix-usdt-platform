@@ -35,6 +35,8 @@ O sistema exige HTTPS na porta 443, rejeita IPs literais, hosts locais/internos,
 
 - `GET /v1/merchant/webhooks`: lista endpoints sem expor os segredos.
 - `DELETE /v1/merchant/webhooks/:endpointId`: desativa o endpoint e cancela entregas ainda pendentes.
+- `POST /v1/merchant/webhooks/:endpointId/enable`: reativa um endpoint desativado pelo próprio comerciante.
+- `POST /v1/merchant/webhooks/:endpointId/deliveries/:deliveryId/retry`: reabre uma entrega `FAILED` do mesmo endpoint, somente se ele estiver ativo.
 - `POST /v1/merchant/webhooks/:endpointId/rotate-secret`: invalida o segredo anterior e retorna um novo segredo uma única vez.
 - `GET /v1/merchant/webhooks/:endpointId/deliveries`: lista até 100 entregas recentes e seus estados, tentativas e códigos de resposta/erro.
 
@@ -95,6 +97,18 @@ function verifyPixSplitWebhook({ secret, timestamp, rawBody, signature }) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 ```
+
+## Reenvio manual de entrega que falhou
+
+Uma entrega em estado `FAILED` pode ser reaberta pelo comerciante quando o endpoint estiver ativo:
+
+```
+POST /v1/merchant/webhooks/:endpointId/deliveries/:deliveryId/retry
+```
+
+O sistema reutiliza a mesma linha do outbox, preserva `eventId` e payload, zera o contador de tentativas anteriores e agenda uma nova tentativa imediata. A operação é auditada e protegida por rate limit. Entregas `PENDING`, `PROCESSING` ou `DELIVERED` não podem ser reabertas. Um endpoint desativado precisa ser reabilitado antes; apenas o comerciante proprietário consegue reabilitá-lo.
+
+Como a semântica permanece at-least-once, o consumidor deve continuar deduplicando pelo mesmo `X-PixSplit-Event-Id`; reenvio manual não cria um evento novo.
 
 ## Retentativas e entrega
 
