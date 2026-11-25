@@ -63,6 +63,8 @@ jobs:
           chmod 644 "$PROMETHEUS_METRICS_TOKEN_FILE"
           printf '%s' 'https://alerts.pixsplit.invalid/webhook' > "$ALERTMANAGER_WEBHOOK_URL_FILE"
           chmod 644 "$ALERTMANAGER_WEBHOOK_URL_FILE"
+          node --test scripts/validate-alertmanager-webhook-url.test.mjs
+          node scripts/validate-alertmanager-webhook-url.mjs
           docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml config --quiet
           docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
