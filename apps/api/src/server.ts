@@ -16,7 +16,7 @@ import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecover
 import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
 import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
 import { isAuthSessionActive } from './security/session-store.js';
-import { applyVersionedApiResponseCachePolicy } from './security/admin-response-cache.js';
+import { applyVersionedApiResponseCachePolicy } from './security/versioned-api-response-cache.js';
 import { sanitizeAdminAuditMetadata } from './security/admin-audit-metadata.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
