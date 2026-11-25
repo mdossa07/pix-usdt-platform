@@ -16,6 +16,7 @@ import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecover
 import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
 import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
 import { isAuthSessionActive } from './security/session-store.js';
+import { applyAdminResponseCachePolicy } from './security/admin-response-cache.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -52,6 +53,10 @@ const httpMetrics = createHttpMetrics();
 const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
 app.addHook('onRequest', async request => {
   requestStartedAt.set(request, process.hrtime.bigint());
+});
+app.addHook('onSend', async (request, reply, payload) => {
+  applyAdminResponseCachePolicy(request.url, (name, value) => reply.header(name, value));
+  return payload;
 });
 app.addHook('onResponse', async (request, reply) => {
   const startedAt = requestStartedAt.get(request);
@@ -1376,7 +1381,6 @@ app.get('/v1/admin/payments', { preHandler: [app.authenticate] }, async (request
 
 // --- Admin: unresolved merchant payment reservations ---
 app.get('/v1/admin/payment-reservations/pending', { preHandler: [app.authenticate] }, async (request, reply) => {
-  reply.header('Cache-Control', 'no-store');
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const reservations = await listPendingMerchantPaymentReservations(prisma);
   return reservations.map(reservation => ({
