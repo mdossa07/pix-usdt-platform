@@ -31,6 +31,11 @@ async function cleanupTestMerchant() {
 try {
   const context = await browser.newContext();
   const page = await context.newPage();
+  page.on('console', message => {
+    if (message.type() === 'error') console.error('BROWSER_CONSOLE_ERROR:', message.text());
+  });
+  page.on('pageerror', error => console.error('BROWSER_PAGE_ERROR:', error.message));
+  page.on('requestfailed', request => console.error('BROWSER_REQUEST_FAILED:', request.url(), request.failure()?.errorText));
 
   await page.goto(WEB_ORIGIN + '/register', { waitUntil: 'domcontentloaded' });
   await page.getByPlaceholder('Seu nome').fill('PixSplit Browser E2E');
@@ -89,7 +94,21 @@ try {
   }, API_ORIGIN);
   assert.equal(sessionAfterRejectedMutation, 200, 'a rejected CSRF request must not revoke the current session');
 
-  await page.getByRole('button', { name: 'Sair da conta' }).click();
+  const logoutButton = page.locator('button[aria-label="Sair da conta"]');
+  try {
+    await logoutButton.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => ({
+      url: location.href,
+      title: document.title,
+      bodyText: document.body.innerText.slice(0, 3000),
+      hasWorkspaceHeader: Boolean(document.querySelector('.workspace-topbar')),
+      hasLogoutButton: Boolean(document.querySelector('button[aria-label="Sair da conta"]')),
+    }));
+    console.error('MERCHANT_DASHBOARD_DIAGNOSTICS:', JSON.stringify(diagnostics));
+    throw error;
+  }
+  await logoutButton.click();
   await page.waitForURL('**/login', { timeout: 30_000 });
 
   const clientState = await page.evaluate(() => ({
