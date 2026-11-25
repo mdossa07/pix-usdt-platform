@@ -1574,7 +1574,7 @@ const retryWorker = mockFinancialExecutionEnabled ? startRetryWorker() : null;
 const merchantWebhookDispatcher = startMerchantWebhookDispatcher(prisma, error => {
   app.log.error({ err: error instanceof Error ? error.name : 'unknown' }, 'Merchant webhook dispatcher cycle failed');
 });
-const reconciliation = new ReconciliationService(prisma);
+const reconciliation = new ReconciliationService(prisma, enqueueSettlement);
 const reconciliationTimer = mockFinancialExecutionEnabled ? setInterval(() => {
   void reconciliation.reconcile().catch((error) => {
     app.log.error({ err: error instanceof Error ? error.name : 'unknown' }, 'Payment reconciliation cycle failed');
