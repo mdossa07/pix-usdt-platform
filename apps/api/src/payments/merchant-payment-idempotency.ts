@@ -112,7 +112,8 @@ export async function reserveMerchantPaymentIdempotency(
 
 /**
  * Stores the provider result and the payment response in the same transaction
- * as the Payment row. A missing reservation or a second completion is an error.
+ * as the Payment row. Returns false when another request already completed
+ * the reservation or the reservation no longer matches.
  */
 export async function completeMerchantPaymentIdempotency(
   tx: Prisma.TransactionClient,

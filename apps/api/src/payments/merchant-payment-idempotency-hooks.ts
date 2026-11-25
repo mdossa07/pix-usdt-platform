@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import {
   completeMerchantPaymentIdempotency,
   reserveMerchantPaymentIdempotency,
+  MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
 } from './merchant-payment-idempotency.js';
 import { decryptPii } from '../security/crypto.js';
 
@@ -37,6 +38,10 @@ function validBodyForFingerprint(body: MerchantPaymentBody): body is MerchantPay
     && (body.payerName === undefined || (typeof body.payerName === 'string' && body.payerName.length >= 1 && body.payerName.length <= 200))
     && (body.payerTaxId === undefined || (typeof body.payerTaxId === 'string' && body.payerTaxId.length >= 1 && body.payerTaxId.length <= 64))
     && (body.description === undefined || (typeof body.description === 'string' && body.description.length <= 500));
+}
+
+function isJsonObject(value: Prisma.JsonValue | null): value is Prisma.JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function createMerchantPaymentIdempotencyHooks(
@@ -144,14 +149,36 @@ export function createMerchantPaymentIdempotencyHooks(
         mode: 'mock',
         warning: 'Cobrança criada em modo de demonstração. Não aceite nem envie este código PIX como pagamento real.',
       };
-      await db.$transaction(tx => completeMerchantPaymentIdempotency(
+      const completed = await db.$transaction(tx => completeMerchantPaymentIdempotency(
         tx,
         normalized.externalId,
         reservation.requestHash,
         response as Prisma.InputJsonObject,
       ));
+
+      let responseToSend: Prisma.JsonObject | Prisma.InputJsonObject = response;
+      if (!completed) {
+        // Another request may have completed the same recovery concurrently.
+        // Prefer its durable response instead of failing the losing request.
+        const latest = await db.idempotencyRecord.findUnique({
+          where: {
+            scope_key: {
+              scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
+              key: normalized.externalId,
+            },
+          },
+        });
+        if (latest?.requestHash === reservation.requestHash && isJsonObject(latest.responseJson)) {
+          responseToSend = latest.responseJson;
+        } else {
+          reply.header('Retry-After', '1');
+          reply.code(409).send({ error: 'payment_creation_in_progress' });
+          return;
+        }
+      }
+
       reply.header('Idempotency-Replayed', 'true');
-      reply.code(200).send(response);
+      reply.code(200).send(responseToSend);
       return;
     }
 

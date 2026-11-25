@@ -54,8 +54,8 @@ function makeDb(options: {
         record = { ...data, responseJson: null };
         return record;
       },
-      updateMany: async ({ data }: { data: { responseJson: unknown } }) => {
-        if (!record) return { count: 0 };
+      updateMany: async ({ where, data }: { where: { requestHash: string }; data: { responseJson: unknown } }) => {
+        if (!record || record.requestHash !== where.requestHash || record.responseJson !== null) return { count: 0 };
         record = { ...record, responseJson: data.responseJson };
         responseWrites.push(data.responseJson);
         return { count: 1 };
@@ -77,6 +77,9 @@ function makeDb(options: {
     },
     payment: {
       findUnique: async () => options.existingPayment ?? null,
+    },
+    idempotencyRecord: {
+      findUnique: async () => record,
     },
     $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
   } as unknown as PrismaClient;
@@ -110,6 +113,60 @@ test('extra fields ignored by the Zod route schema do not bypass the externalId 
   assert.equal((request as unknown as { merchantPaymentReservation?: { externalId: string } }).merchantPaymentReservation?.externalId, baseBody.externalId);
   assert.equal(fake.record?.scope, MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE);
   assert.equal(fake.record?.key, baseBody.externalId);
+});
+
+test('concurrent recovery requests share the response written by the winning completion', async () => {
+  const recoveryBody = {
+    amountBrlCents: baseBody.amountBrlCents,
+    walletDestinationId: baseBody.walletDestinationId,
+    externalId: baseBody.externalId,
+    payerName: baseBody.payerName,
+    description: baseBody.description,
+  };
+  const requestHash = hashMerchantPaymentRequest({
+    merchantId: 'merchant-1',
+    ...recoveryBody,
+  }, piiKey);
+  const expiresAt = new Date('2026-11-25T18:00:00.000Z');
+  const existingPayment = {
+    id: 'payment-concurrent',
+    externalId: baseBody.externalId,
+    merchantId: 'merchant-1',
+    amountBrlCents: 5000n,
+    walletDestinationId: 'wallet-1',
+    payerName: 'Payer',
+    payerTaxIdEncrypted: null,
+    description: 'Checkout',
+    status: 'PIX_PENDING',
+    pixQrCodeBase64: 'mock-qr',
+    pixCopyPaste: 'MOCK-PIX-NOT-PAYABLE:concurrent',
+    expiresAt,
+    providerOrderId: 'provider-concurrent',
+  };
+  const fake = makeDb({
+    existingPayment,
+    idempotencyRecord: {
+      scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
+      key: baseBody.externalId,
+      requestHash,
+      responseJson: null,
+    },
+  });
+  const hooks = createMerchantPaymentIdempotencyHooks(fake.db, piiKey);
+  const first = makeReply();
+  const second = makeReply();
+
+  await Promise.all([
+    hooks.preHandler(makeRequest(recoveryBody), first.reply),
+    hooks.preHandler(makeRequest(recoveryBody), second.reply),
+  ]);
+
+  assert.equal(first.state.statusCode, 200);
+  assert.equal(second.state.statusCode, 200);
+  assert.equal(first.state.headers['Idempotency-Replayed'], 'true');
+  assert.equal(second.state.headers['Idempotency-Replayed'], 'true');
+  assert.deepEqual(second.state.sent, first.state.sent);
+  assert.equal(fake.responseWrites.length, 1);
 });
 
 test('recovery after payment persistence rebuilds the complete original response contract', async () => {
