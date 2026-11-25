@@ -54,7 +54,8 @@ pnpm dev
 ```
 
 Web: http://localhost:3000  
-API: http://localhost:4000/health
+API liveness: http://localhost:4000/health
+API readiness (PostgreSQL + Redis): http://localhost:4000/ready
 
 ## Criar usuário superadministrador
 
