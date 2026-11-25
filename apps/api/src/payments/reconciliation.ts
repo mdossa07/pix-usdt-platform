@@ -1,97 +1,120 @@
-import { PrismaClient, PaymentStatus, TransferStatus } from '@prisma/client';
+import { Prisma, PrismaClient, PaymentStatus, TransferStatus } from '@prisma/client';
 import { enqueueSettlement } from '../queues/producers.js';
+
+const DEFAULT_BATCH_SIZE = 100;
+const STALE_AFTER_MS = 5 * 60 * 1000;
+const PROCESSING_AFTER_MS = 30 * 60 * 1000;
+
+type ReconciliationPayment = {
+  id: string;
+  amountBrlCents: bigint;
+};
+
+type ReconciliationDatabase = Pick<PrismaClient, 'payment'>;
+type SettlementEnqueuer = (paymentId: string, brlCents: bigint) => Promise<void>;
 
 /**
  * Financial reconciliation service.
- * Identifies stuck, incomplete or divergent payments and schedules safe reprocessing.
- * Never mutates financial state directly — only enqueues recovery jobs.
+ * Finds stale payments in one deduplicated query and schedules safe reprocessing.
+ * It never changes financial state or submits payouts directly.
  */
 export class ReconciliationService {
-  constructor(private readonly prisma: PrismaClient) {}
+  private inFlight: Promise<number> | null = null;
+
+  constructor(
+    private readonly prisma: ReconciliationDatabase,
+    private readonly enqueue: SettlementEnqueuer = enqueueSettlement,
+    private readonly now: () => Date = () => new Date(),
+    private readonly batchSize = DEFAULT_BATCH_SIZE,
+  ) {
+    if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 1_000) {
+      throw new Error('reconciliation_batch_size_must_be_between_1_and_1000');
+    }
+  }
 
   /**
-   * Main reconciliation loop. Run periodically (e.g., every 5 minutes).
-   * Returns the number of payments enqueued for recovery.
+   * Main reconciliation loop. The server schedules this every five minutes.
+   * Overlapping timer ticks in the same process share the active run.
+   * Returns the number of unique payments successfully enqueued.
    */
-  async reconcile(): Promise<number> {
-    const staleThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 min
-    const stuckThreshold = new Date(Date.now() - 30 * 60 * 1000); // 30 min
+  reconcile(): Promise<number> {
+    if (this.inFlight) return this.inFlight;
+
+    this.inFlight = this.runReconciliation().finally(() => {
+      this.inFlight = null;
+    });
+    return this.inFlight;
+  }
+
+  private async runReconciliation(): Promise<number> {
+    const now = this.now().getTime();
+    const staleThreshold = new Date(now - STALE_AFTER_MS);
+    const stuckThreshold = new Date(now - PROCESSING_AFTER_MS);
+    const pendingLegStatuses: TransferStatus[] = [
+      TransferStatus.CREATED,
+      TransferStatus.SUBMITTED,
+      TransferStatus.PROCESSING,
+    ];
+
+    // A single OR query returns each Payment row once even if it matches
+    // multiple recovery conditions (e.g. both payout legs are PROCESSING).
+    const where: Prisma.PaymentWhereInput = {
+      OR: [
+        {
+          status: {
+            in: [
+              PaymentStatus.PIX_CONFIRMED,
+              PaymentStatus.CONVERSION_PENDING,
+              PaymentStatus.CRYPTO_CREDITED,
+            ],
+          },
+          updatedAt: { lt: staleThreshold },
+        },
+        {
+          merchantTransferStatus: TransferStatus.PROCESSING,
+          updatedAt: { lt: stuckThreshold },
+        },
+        {
+          platformTransferStatus: TransferStatus.PROCESSING,
+          updatedAt: { lt: stuckThreshold },
+        },
+        {
+          merchantTransferStatus: TransferStatus.COMPLETED,
+          platformTransferStatus: { in: pendingLegStatuses },
+          updatedAt: { lt: staleThreshold },
+        },
+        {
+          platformTransferStatus: TransferStatus.COMPLETED,
+          merchantTransferStatus: { in: pendingLegStatuses },
+          updatedAt: { lt: staleThreshold },
+        },
+      ],
+    };
 
     let recovered = 0;
+    let cursorId: string | undefined;
 
-    // 1. PIX confirmed but no conversion started (>5min)
-    const pixStuck = await this.prisma.payment.findMany({
-      where: {
-        status: PaymentStatus.PIX_CONFIRMED,
-        updatedAt: { lt: staleThreshold },
-      },
-      select: { id: true, amountBrlCents: true },
-    });
-    for (const p of pixStuck) {
-      await enqueueSettlement(p.id, p.amountBrlCents);
-      recovered++;
-    }
+    // Keyset pagination keeps memory bounded while allowing one reconciliation
+    // cycle to walk every matching payment. Ordering by immutable unique ID keeps
+    // the cursor stable while workers update payment.updatedAt during the scan.
+    while (true) {
+      const batch = await this.prisma.payment.findMany({
+        where,
+        select: { id: true, amountBrlCents: true },
+        orderBy: { id: 'asc' },
+        take: this.batchSize,
+        ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      }) as ReconciliationPayment[];
 
-    // 2. Conversion done but settlement not started (>5min)
-    const conversionStuck = await this.prisma.payment.findMany({
-      where: {
-        status: { in: [PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED] },
-        updatedAt: { lt: staleThreshold },
-      },
-      select: { id: true, amountBrlCents: true },
-    });
-    for (const p of conversionStuck) {
-      await enqueueSettlement(p.id, p.amountBrlCents);
-      recovered++;
-    }
+      if (batch.length === 0) break;
 
-    // 3. Merchant payout stuck in PROCESSING (>30min)
-    const merchantStuck = await this.prisma.payment.findMany({
-      where: {
-        merchantTransferStatus: TransferStatus.PROCESSING,
-        updatedAt: { lt: stuckThreshold },
-      },
-      select: { id: true, amountBrlCents: true },
-    });
-    for (const p of merchantStuck) {
-      await enqueueSettlement(p.id, p.amountBrlCents);
-      recovered++;
-    }
+      for (const payment of batch) {
+        await this.enqueue(payment.id, payment.amountBrlCents);
+        recovered++;
+      }
 
-    // 4. Platform commission stuck in PROCESSING (>30min)
-    const platformStuck = await this.prisma.payment.findMany({
-      where: {
-        platformTransferStatus: TransferStatus.PROCESSING,
-        updatedAt: { lt: stuckThreshold },
-      },
-      select: { id: true, amountBrlCents: true },
-    });
-    for (const p of platformStuck) {
-      await enqueueSettlement(p.id, p.amountBrlCents);
-      recovered++;
-    }
-
-    // 5. One leg completed, other still pending (>5min) — partial settlement
-    const partialStuck = await this.prisma.payment.findMany({
-      where: {
-        OR: [
-          {
-            merchantTransferStatus: TransferStatus.COMPLETED,
-            platformTransferStatus: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PROCESSING] },
-            updatedAt: { lt: staleThreshold },
-          },
-          {
-            platformTransferStatus: TransferStatus.COMPLETED,
-            merchantTransferStatus: { in: [TransferStatus.CREATED, TransferStatus.SUBMITTED, TransferStatus.PROCESSING] },
-            updatedAt: { lt: staleThreshold },
-          },
-        ],
-      },
-      select: { id: true, amountBrlCents: true },
-    });
-    for (const p of partialStuck) {
-      await enqueueSettlement(p.id, p.amountBrlCents);
-      recovered++;
+      cursorId = batch[batch.length - 1].id;
+      if (batch.length < this.batchSize) break;
     }
 
     return recovered;
