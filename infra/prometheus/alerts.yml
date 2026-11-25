@@ -42,7 +42,7 @@ groups:
           description: The 95th percentile of observed API request latency exceeded one second for at least five minutes.
 
       - alert: PixSplitApiProcessRestarted
-        expr: changes(pixsplit_process_uptime_seconds[10m]) > 0
+        expr: resets(pixsplit_process_uptime_seconds[10m]) > 0
         for: 1m
         labels:
           severity: info
