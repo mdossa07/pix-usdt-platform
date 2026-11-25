@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**80% concluído (entrega de software verificável).** A estimativa anterior era 79% em 25/11. Além do ensaio descartável PostgreSQL 16→18 (PR #45), a PR #47 integrou coordenação distribuída da reconciliação com advisory lock transacional PostgreSQL e lotes limitados a 25 pagamentos; CI e Security passaram. A PR #49 adiciona a validação de duas conexões PostgreSQL reais e ainda aguarda CI. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
+**81% concluído (entrega de software verificável).** A estimativa anterior era 80% em 25/11. Além do ensaio descartável PostgreSQL 16→18 (PR #45), a PR #47 integrou coordenação distribuída da reconciliação com advisory lock transacional PostgreSQL e lotes limitados a 25 pagamentos. A PR #49 acrescentou teste E2E com dois clientes Prisma independentes contra PostgreSQL real; o teste específico e as 45 etapas de CI passaram, assim como CodeQL e Gitleaks. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -33,7 +33,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Idempotência transacional: chave por comerciante/endpoint, hash canônico e resposta original persistida.
 - Requisições concorrentes com a mesma chave não criam cobranças duplicadas; corpo divergente recebe HTTP 409.
 - Tentativas e transferências preservadas, tratamento conservador de resultados desconhecidos e reconciliação; não há retry cego de payout ambíguo.
-- Reconciliação distribuída entre réplicas Fastify via advisory lock transacional PostgreSQL, com lote máximo de 25 pagamentos, liberação automática do lock em commit/rollback e enfileiramento paralelo; PR #47 integrada em `cceb16e`. Teste de integração com dois clientes PostgreSQL separados está na PR #49, ainda pendente de CI/merge.
+- Reconciliação distribuída entre réplicas Fastify via advisory lock transacional PostgreSQL, com lote máximo de 25 pagamentos, liberação automática do lock em commit/rollback e enfileiramento paralelo; PR #47 integrada em `cceb16e`. Teste E2E com dois clientes Prisma independentes confirmou a contenção e a liberação do lock em PostgreSQL real (PR #49, integrada em `0fd1fd7`).
 - Webhooks de entrada com assinatura sobre corpo bruto, fingerprint SHA-256, claim atômico por lease, recuperação e fencing token.
 - Migrações PostgreSQL testadas em schema vazio; migrate deploy separado de migrate dev.
 
@@ -79,7 +79,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #38 — `pnpm/action-setup` atualizado para `v6`; integrado em `cf3a616`.
 - PR #40 — runbook PostgreSQL 16→18, sidecar isolado com volume novo e ensaio lógico automatizado em CI; integrado em `5b6600b`.
 - PR #47 — advisory lock transacional para coordenação da reconciliação entre réplicas, lotes limitados e teste unitário; integrada em `cceb16e` após CI e Security aprovados.
-- PR #49 — teste E2E com dois clientes Prisma/PostgreSQL reais em schema isolado e etapa própria no CI; aberta, aguardando validação.
+- PR #49 — teste E2E com dois clientes Prisma/PostgreSQL reais em schema isolado e etapa própria no CI; integrada em `0fd1fd7` após 45/45 etapas de CI, CodeQL e Gitleaks aprovados.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
@@ -99,6 +99,8 @@ Evidências:
 - [Security PR #40 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45637080961).
 - [CI PR #47 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45646235215).
 - [Security PR #47 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45646235047).
+- [CI PR #49 — sucesso, incluindo teste de advisory lock em PostgreSQL real](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45647362568).
+- [Security PR #49 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45647362549).
 
 O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
