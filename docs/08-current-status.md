@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**77% concluído (entrega de software verificável).** A estimativa anterior era 76% em 25/11. Este avanço inclui o ensaio automatizado e isolado de migração lógica PostgreSQL 16→18, com dump usando cliente 18, restauração em cluster 18, verificação de dados, volume novo e runbook de backup/cutover/rollback; também alinha o `promtool` à versão Prometheus 3.16 usada no stack (PR #40). Este índice mede implementação de software; não significa que o volume real foi migrado nem que o sistema esteja pronto para dinheiro real.
+**78% concluído (entrega de software verificável).** A estimativa anterior era 77% em 25/11. Este avanço inclui a correção da reconciliação de payouts ambíguos `SUBMITTED`: ambas as pernas agora voltam à consulta do provedor após 30 minutos, com a referência/idempotency key original, sem reenvio cego; também evita ciclos locais de reconciliação sobrepostos e possui testes unitários para deduplicação e falha da fila (PR #43). Este índice mede implementação de software; não significa que o provedor esteja homologado nem que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -171,6 +171,8 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - Gitleaks e CodeQL passaram na PR.
 - Dependabot está configurado para npm, GitHub Actions e Docker Compose. O Dependency Review foi deixado em `workflow_dispatch` enquanto o Dependency Graph estiver desativado; o CI mantém `pnpm audit` como gate ativo.
 - O workflow temporário de geração de lockfile foi removido depois da geração e validação para não deixar automação de escrita limitada a uma branch de trabalho.
+- Reconciliação também seleciona payouts `SUBMITTED` há mais de 30 minutos nas duas pernas independentes, reentra no orquestrador para consulta pelo identificador original, consolida candidatos em uma consulta OR e impede ciclos `setInterval` sobrepostos na mesma instância.
+- A reconciliação não converte ausência de status do provedor em falha nem reenvia automaticamente uma transferência ambígua; quando o adapter não oferece consulta segura, o pagamento continua `UNDER_REVIEW`.
 
 **Progresso global estimado: 75%.** A plataforma permanece `mock` e não pode movimentar dinheiro real.
 
@@ -199,3 +201,16 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - CI de push, CI de PR e Gitleaks/CodeQL da PR #40 passaram.
 
 **Progresso global estimado: 77%.** O software agora possui um rehearsal repetível de migração major; a base real do usuário ainda não foi migrada, e o serviço principal permanece PostgreSQL 16.
+
+
+## Entrega validada — recuperação de payouts ambíguos — 25/11/2026
+
+- PR #43 integrada na `master` no commit `250ff57`.
+- O reconciliador passou a localizar cada uma das pernas `SUBMITTED` que permaneça sem resolução por pelo menos 30 minutos, inclusive quando ambas estiverem ambíguas.
+- Cada pagamento é enfileirado uma vez por ciclo; uma consulta OR substitui as múltiplas consultas por categoria e a ordenação prioriza os pagamentos mais antigos.
+- O serviço usa single-flight local para impedir ciclos sobrepostos no mesmo processo. Falha temporária ao enfileirar libera a trava para o próximo ciclo.
+- A retomada usa o `PaymentOrchestrator`, que consulta o provedor pela referência e chave de idempotência originais antes de qualquer nova tentativa. Resultado ausente, erro de consulta ou falta de capacidade do adapter não autoriza novo payout; mantém-se a revisão manual.
+- Cinco testes unitários cobrem as duas pernas `SUBMITTED`, deduplicação, ciclo sobreposto, falha de Redis e ausência de candidatos.
+- CI de push e pull request, auditoria de dependências, Chromium, integrações PostgreSQL, build, Gitleaks e CodeQL passaram.
+
+**Progresso global estimado: 78%.** A plataforma permanece em modo mock e não movimenta dinheiro real.
