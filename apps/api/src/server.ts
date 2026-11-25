@@ -1395,7 +1395,6 @@ app.get('/v1/admin/payment-reservations/pending', { preHandler: [app.authenticat
 });
 
 app.post('/v1/admin/payment-reservations/:id/review', { preHandler: [app.authenticate] }, async (request, reply) => {
-  reply.header('Cache-Control', 'no-store');
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   const params = z.object({ id: z.string().min(1).max(128) }).safeParse(request.params);
   const body = z.object({ note: z.string().trim().min(10).max(1000) }).strict().safeParse(request.body);
