@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**72% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O ajuste para 72% considera a entrega e integração do stack local de observabilidade (Prometheus/Grafana) e o endurecimento adicional do bloqueio SSRF para prefixos IPv6 NAT64 (PRs #20 e #19).
+**73% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O ajuste para 72% considera a entrega e integração do stack local de observabilidade (Prometheus/Grafana) e o endurecimento adicional do bloqueio SSRF para prefixos IPv6 NAT64 (PRs #20 e #19).
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -99,3 +99,17 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Pagamento só é concluído depois de payin confirmado, conversão reconciliada e os dois payouts confirmados individualmente.
 - Falha ou timeout em uma perna não autoriza reenvio cego da outra.
 - Segredos só podem existir no secret manager do ambiente de execução.
+
+
+## Entrega validada — retry manual de webhooks — 25/11/2026
+
+- PR #23 integrado em `master`, merge commit `f865f64`; CI pós-merge #438 aprovado.
+- Comerciante pode reabilitar endpoint próprio e solicitar retry apenas de uma entrega `FAILED`.
+- Retry reabre a mesma linha PostgreSQL do outbox, preservando `eventId` e payload original; não cria um novo evento financeiro.
+- Operação usa compare-and-set, valida propriedade do comerciante/endpoint, exige endpoint habilitado, aplica rate limit e grava auditoria.
+- Tentativas repetidas em `PENDING`, `PROCESSING` ou `DELIVERED` são recusadas; consumidores continuam deduplicando pelo mesmo `X-PixSplit-Event-Id`.
+- Testes PostgreSQL cobrem preservação do evento/payload, reenvio duplicado, endpoint desativado e isolamento entre comerciantes.
+
+**Progresso global estimado: 73%.**
+
+O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
