@@ -1,8 +1,10 @@
 name: Dependency Review
 
+# The repository Dependency Graph must be enabled in Settings > Security & analysis
+# before this action can run. Until then, pnpm audit runs in the required CI workflow.
+# After the owner enables Dependency Graph, add pull_request: { branches: [master] }.
 on:
-  pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
