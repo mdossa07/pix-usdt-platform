@@ -36,6 +36,11 @@ try {
   });
   page.on('pageerror', error => console.error('BROWSER_PAGE_ERROR:', error.message));
   page.on('requestfailed', request => console.error('BROWSER_REQUEST_FAILED:', request.url(), request.failure()?.errorText));
+  page.on('response', response => {
+    if (response.url().startsWith(API_ORIGIN)) {
+      console.log('BROWSER_API_RESPONSE:', response.status(), response.request().method(), response.url());
+    }
+  });
 
   await page.goto(WEB_ORIGIN + '/register', { waitUntil: 'domcontentloaded' });
   await page.getByPlaceholder('Seu nome').fill('PixSplit Browser E2E');
