@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMerchantWebhookDeliveries } from './outbound-outbox.js';
+import { hasMerchantWebhookEndpointCapacity } from './outbound-endpoint-policy.js';
 import { requeueFailedMerchantWebhookDelivery } from './outbound-retry.js';
 
 const databaseUrl = new URL(process.env.DATABASE_URL!);
@@ -288,6 +289,43 @@ describe('transactional merchant webhook outbox', () => {
       }),
     );
     expect(otherMerchantOutcome).toEqual({ kind: 'not_found' });
+  }, 20_000);
+
+  it('keeps the active endpoint limit at ten across disable and re-enable', async () => {
+    const initialCapacity = await prisma.$transaction(tx =>
+      hasMerchantWebhookEndpointCapacity(tx, merchantId),
+    );
+    expect(initialCapacity).toBe(true);
+
+    const additional = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      prisma.merchantWebhookEndpoint.create({
+        data: {
+          merchantId,
+          url: `https://hooks.example.com/capacity/${suffix}/${index}`,
+          events: ['payment.created'],
+          signingSecretEncrypted: `test-encrypted-capacity-${index}`,
+        },
+      }),
+    ));
+    expect(additional).toHaveLength(8);
+
+    const full = await prisma.$transaction(tx =>
+      hasMerchantWebhookEndpointCapacity(tx, merchantId),
+    );
+    expect(full).toBe(false);
+
+    await prisma.merchantWebhookEndpoint.update({
+      where: { id: createdEndpointId },
+      data: { isEnabled: false },
+    });
+    const capacityAfterDisable = await prisma.$transaction(tx =>
+      hasMerchantWebhookEndpointCapacity(tx, merchantId),
+    );
+    expect(capacityAfterDisable).toBe(true);
+    await prisma.merchantWebhookEndpoint.update({
+      where: { id: createdEndpointId },
+      data: { isEnabled: true },
+    });
   }, 20_000);
 
 });
