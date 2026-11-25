@@ -13,7 +13,10 @@
     "db:generate": "dotenv -e ../../.env -- prisma generate --schema prisma/schema.prisma",
     "db:migrate": "dotenv -e ../../.env -- prisma migrate deploy --schema prisma/schema.prisma",
     "db:migrate:dev": "dotenv -e ../../.env -- prisma migrate dev --schema prisma/schema.prisma",
-    "db:studio": "dotenv -e ../../.env -- prisma studio --schema prisma/schema.prisma"
+    "db:studio": "dotenv -e ../../.env -- prisma studio --schema prisma/schema.prisma",
+    "start": "node dist/server.js",
+    "db:generate:deploy": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
