@@ -17,7 +17,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Reject high/critical vulnerable dependency additions
         uses: actions/dependency-review-action@v4
         with:
