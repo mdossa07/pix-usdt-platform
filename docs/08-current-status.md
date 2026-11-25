@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**83% concluído (entrega de software verificável).** A estimativa anterior era 82% em 25/11. Além da idempotência HMAC de cobranças da PR #52, a PR #54 adicionou uma fila no painel administrativo para reservas HMAC sem resposta persistida: metadados operacionais mínimos, associação do comerciante, janela de 2 minutos, registro de revisão manual com auditoria e proteção explícita para manter a reserva bloqueada. A revisão nunca apaga a referência nem autoriza novo envio. CI 47/47, Gitleaks 5/5 e CodeQL 8/8 passaram. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
+**84% concluído (entrega de software verificável).** A estimativa anterior era 83% em 25/11. A PR #56 corrigiu a fila de reservas HMAC: agora só reservas ainda não revisadas ocupam as 100 posições de trabalho; ao registrar a primeira revisão, o item sai da fila, mas continua bloqueado, sem resposta persistida e rastreável na Auditoria. O compare-and-set com `lastReviewedAt IS NULL` impede sobrescrever a revisão inicial. A implementação foi validada com CI 47/47, Gitleaks 5/5 e CodeQL 8/8. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -36,6 +36,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Reconciliação distribuída entre réplicas Fastify via advisory lock transacional PostgreSQL, com lote máximo de 25 pagamentos, liberação automática do lock em commit/rollback e enfileiramento paralelo; PR #47 integrada em `cceb16e`. Teste E2E com dois clientes Prisma independentes confirmou a contenção e a liberação do lock em PostgreSQL real (PR #49, integrada em `0fd1fd7`).
 - Criação de cobranças HMAC de comerciantes protegida por idempotência persistente: `externalId` reservado antes do efeito externo, fingerprint HMAC com chave derivada da chave PII, rejeição de payload divergente, replay da resposta original, recuperação da janela de crash e recuperação concorrente. Resultados ambíguos continuam fail-closed e exigem reconciliação manual. PR #52 integrada em `0fef2ef`; CI 45/45, Gitleaks e CodeQL aprovados.
 - Fila administrativa para reservas HMAC antigas sem resposta persistida: grava somente merchantId, valor e walletDestinationId (sem PII do pagador), lista apenas registros com mais de 2 minutos, enriquece comerciante, permite documentar revisão e grava audit event. A revisão não libera nem apaga a reserva. PR #54 integrada em `6cd1d63`; CI push e PR 47/47, Gitleaks 5/5 e CodeQL 8/8.
+- Justiça da fila administrativa: a consulta exibe apenas reservas ainda não revisadas (`lastReviewedAt IS NULL`); a primeira revisão as retira da fila de trabalho sem liberar a idempotência. A atualização usa compare-and-set para impedir sobrescrever a primeira revisão; nota e ator permanecem em auditoria. PR #56 integrada em `a7d8a48`; CI 47/47, Gitleaks 5/5 e CodeQL 8/8.
 - Webhooks de entrada com assinatura sobre corpo bruto, fingerprint SHA-256, claim atômico por lease, recuperação e fencing token.
 - Migrações PostgreSQL testadas em schema vazio; migrate deploy separado de migrate dev.
 
@@ -84,6 +85,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #49 — teste E2E com dois clientes Prisma/PostgreSQL reais em schema isolado e etapa própria no CI; integrada em `0fd1fd7` após 45/45 etapas de CI, CodeQL e Gitleaks aprovados.
 - PR #52 — idempotência persistente para criação HMAC de cobranças, testes unitários, testes de hooks/recuperação concorrente e integração PostgreSQL; integrada em `0fef2ef` após CI 45/45, Gitleaks 5/5 e CodeQL 8/8.
 - PR #54 — fila administrativa para reservas HMAC não resolvidas, metadata mínima, revisão manual auditada e teste PostgreSQL que comprova que revisão não libera a reserva; integrada em `6cd1d63` após CI 47/47, Gitleaks 5/5 e CodeQL 8/8.
+- PR #56 — corrige o fluxo da fila para que reservas já revisadas saiam da lista de trabalho sem serem desbloqueadas; compare-and-set impede segunda revisão e o teste PostgreSQL confirma permanência da reserva sem resposta. Integrada em `a7d8a48` após CI 47/47, Gitleaks 5/5 e CodeQL 8/8.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
@@ -109,6 +111,8 @@ Evidências:
 - [Security PR #52 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45652458872).
 - [CI PR #54 — sucesso, 47/47 etapas](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45655539203).
 - [Security PR #54 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45655539240).
+- [CI PR #56 — sucesso, 47/47 etapas](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45657531472).
+- [Security PR #56 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45657531512).
 
 O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
