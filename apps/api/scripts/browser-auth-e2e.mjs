@@ -41,6 +41,9 @@ try {
       console.log('BROWSER_API_RESPONSE:', response.status(), response.request().method(), response.url());
     }
   });
+  page.on('framenavigated', frame => {
+    if (frame === page.mainFrame()) console.log('BROWSER_NAVIGATION:', frame.url());
+  });
 
   await page.goto(WEB_ORIGIN + '/register', { waitUntil: 'domcontentloaded' });
   await page.getByPlaceholder('Seu nome').fill('PixSplit Browser E2E');
@@ -49,7 +52,16 @@ try {
   await page.getByPlaceholder('00000000000').fill('12345678000199');
   await page.getByPlaceholder('Crie uma senha forte').fill(password);
   await page.getByRole('button', { name: 'Criar conta' }).click();
-  await page.waitForURL('**/merchant', { timeout: 60_000 });
+  await page.waitForURL('**/merchant', { timeout: 60_000, waitUntil: 'domcontentloaded' });
+  const registrationStorage = await page.evaluate(() => ({
+    url: location.href,
+    marker: localStorage.getItem('pixsplit_authenticated'),
+    legacyToken: localStorage.getItem('pixsplit_token'),
+    csrf: sessionStorage.getItem('pixsplit_csrf'),
+  }));
+  console.log('REGISTRATION_BROWSER_STATE:', JSON.stringify(registrationStorage));
+  assert.equal(registrationStorage.marker, '1', 'registration must persist the browser authentication marker');
+  assert.ok(registrationStorage.csrf, 'registration must persist the CSRF token');
 
   const identity = await page.evaluate(async apiOrigin => {
     const response = await fetch(apiOrigin + '/v1/me', {
