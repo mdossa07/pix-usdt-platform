@@ -39,6 +39,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Proteção de dados nas notas de revisão administrativa: bloqueio server-side de formatos reconhecíveis de PII/credenciais antes de qualquer gravação, validação correta do CPF e teste de não mutação quando a nota é recusada (PR #58; CI 47/47, Gitleaks e CodeQL aprovados no SHA da PR).
 - [x] Minimização e cache-control da fila de revisão: resposta omite e-mail, `merchantId` e `walletDestinationId`, deixa de consultar e-mail e define `Cache-Control: no-store` nos endpoints de consulta/revisão; testes unitários e PostgreSQL cobrem o contrato (PR #60; CI 47/47, Gitleaks e CodeQL aprovados).
 - [x] Política global de cache para a API administrativa e redação de histórico: hook `onSend` garante `Cache-Control: no-store`/`Pragma: no-cache` em todas as rotas `/v1/admin/*`; notas livres históricas de revisão são removidas do payload de auditoria sem apagar o registro ou os metadados não textuais (PR #61; CI 47/47, Gitleaks e CodeQL aprovados).
+- [x] Política global de cache para toda a API versionada: hook `onSend` garante `Cache-Control: no-store`/`Pragma: no-cache` em respostas `/v1/*`, incluindo autenticação, sessões, perfil, comerciantes e checkout, sem modificar `/health`, `/metrics` ou arquivos estáticos (PR #62; CI 47/47, Gitleaks e CodeQL aprovados no SHA da PR).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
