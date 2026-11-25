@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**73% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O avanço contabiliza a proteção SSRF para NAT64 (PR #19), a stack local Prometheus/Grafana (PR #20), o guard do painel superadmin por sessão HttpOnly com E2E Chromium (PR #22) e a recuperação manual e auditada de entregas de webhook (PR #23). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
+**74% concluído (entrega de software verificável).** A estimativa anterior era 73% em 25/11. O avanço reflete também a automação de varredura de segredos no histórico (Gitleaks), análise estática CodeQL para JavaScript/TypeScript e geração de credenciais temporárias mascaradas em cada execução do CI (PR #25). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -18,6 +18,8 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Sessões de navegador em cookie HttpOnly; JWT não é entregue ao JavaScript nem persistido em localStorage.
 - Proteção CSRF em mutações autenticadas por cookie.
 - TOTP RFC 6238, códigos de recuperação armazenados como hashes e MFA obrigatório para superadministradores.
+- Workflow de segurança integrado: Gitleaks analisa o histórico Git completo; CodeQL executa análise `security-extended` em JavaScript/TypeScript.
+- O CI gera JWT secret, chave PII, token Prometheus e senha Grafana aleatórios por execução e mascara os valores nos logs; não mantém esses segredos fixos no YAML.
 - Sessões persistidas em PostgreSQL, revogação centralizada, logout e encerramento individual/global de sessões.
 - O layout administrativo valida identidade em `/v1/me` via cookie HttpOnly, exige `SUPER_ADMIN` e encerra a sessão pelo endpoint de logout; PR #22 cobre login sem bearer token, acesso ao painel e revogação em Chromium.
 - Middleware revalida usuário ativo e papel atual no PostgreSQL em rotas autenticadas.
@@ -117,7 +119,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Tentativas repetidas em `PENDING`, `PROCESSING` ou `DELIVERED` são recusadas; consumidores continuam deduplicando pelo mesmo `X-PixSplit-Event-Id`.
 - Testes PostgreSQL cobrem preservação do evento/payload, reenvio duplicado, endpoint desativado e isolamento entre comerciantes.
 
-**Progresso global estimado: 73%.**
+**Progresso global estimado: 74%.**
 
 O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
 
@@ -129,3 +131,12 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - Ambos os recursos estão integrados em `master`; CI de PR #22 e pós-merge de PR #23 aprovados.
 
 **Progresso global estimado: 73%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
+
+
+## Entrega validada — segurança automatizada do repositório — 25/11/2026
+
+- PR #25 integrado em `master` no commit `60079e7`.
+- Gitleaks executou a varredura do histórico Git completo; primeira execução do workflow terminou com sucesso.
+- CodeQL executou análise `security-extended` para JavaScript/TypeScript; workflow terminou com sucesso.
+- CI deixou de usar credenciais de teste fixas no YAML: gera valores criptograficamente aleatórios para JWT, chave de criptografia PII, token Prometheus e senha Grafana em cada execução, com mascaramento no log.
+- Isso automatiza detecção e reduz exposição de valores estáticos no CI, mas não substitui tornar o repositório privado, proteger `master`, revisar alertas e manter segredos reais em secret manager.
