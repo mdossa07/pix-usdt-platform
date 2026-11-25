@@ -12,6 +12,12 @@ interface AuthUser {
   role: string;
 }
 
+function dashboardPathForRole(role: string): string {
+  if (role === 'SUPER_ADMIN') return '/admin';
+  if (role === 'MERCHANT') return '/merchant';
+  return '/';
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,8 +39,9 @@ export default function LoginPage() {
         });
         sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
         localStorage.removeItem('pixsplit_token');
+        localStorage.removeItem('token');
         localStorage.setItem('pixsplit_authenticated', '1');
-        window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
+        window.location.replace(dashboardPathForRole(result.user.role));
         return;
       }
 
@@ -57,9 +64,10 @@ export default function LoginPage() {
 
       if (!result.csrfToken || !result.user) throw new Error('Resposta de autenticação inválida.');
       sessionStorage.setItem('pixsplit_csrf', result.csrfToken);
-        localStorage.removeItem('pixsplit_token');
+      localStorage.removeItem('pixsplit_token');
+      localStorage.removeItem('token');
       localStorage.setItem('pixsplit_authenticated', '1');
-      window.location.replace(result.user.role === 'SUPER_ADMIN' || result.user.role === 'ADMIN' ? '/admin' : '/merchant');
+      window.location.replace(dashboardPathForRole(result.user.role));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Não foi possível entrar.';
       setError(message === 'invalid_or_replayed_two_factor_code'

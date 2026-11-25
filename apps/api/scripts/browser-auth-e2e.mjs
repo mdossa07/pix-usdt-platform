@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
+import argon2 from 'argon2';
 
 const API_ORIGIN = process.env.E2E_API_ORIGIN ?? 'http://localhost:4000';
 const WEB_ORIGIN = process.env.E2E_WEB_ORIGIN ?? 'http://localhost:3000';
@@ -13,19 +14,24 @@ const { chromium } = await import(pathToFileURL(join(playwrightPackagePath, 'ind
 const prisma = new PrismaClient();
 const email = `pixsplit-browser-${randomUUID()}@example.invalid`;
 const password = 'PixSplitBrowserE2E#2026';
+const adminEmail = `pixsplit-admin-browser-${randomUUID()}@example.invalid`;
+const adminPassword = 'PixSplitAdminBrowserE2E#2026';
 const browser = await chromium.launch({
   headless: true,
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 });
 
-async function cleanupTestMerchant() {
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true, merchant: { select: { id: true } } },
-  });
-  if (!user) return;
-  if (user.merchant) await prisma.merchant.deleteMany({ where: { id: user.merchant.id } });
-  await prisma.user.deleteMany({ where: { id: user.id } });
+async function cleanupTestUsers() {
+  for (const testEmail of [email, adminEmail]) {
+    const user = await prisma.user.findUnique({
+      where: { email: testEmail },
+      select: { id: true, merchant: { select: { id: true } } },
+    });
+    if (!user) continue;
+    if (user.merchant) await prisma.merchant.deleteMany({ where: { id: user.merchant.id } });
+    await prisma.auditEvent.deleteMany({ where: { actorUserId: user.id } });
+    await prisma.user.deleteMany({ where: { id: user.id } });
+  }
 }
 
 try {
@@ -146,13 +152,72 @@ try {
   });
   assert.equal(replay.status, 401, 'the old cookie must be rejected after server-side session revocation');
 
-  console.log('Browser auth E2E passed: registration, HttpOnly cookie, authenticated API, CSRF rejection, session listing, logout and old-cookie rejection.');
+  // Create a real SUPER_ADMIN identity in the test database and verify the
+  // browser can enter the admin panel using only the new HttpOnly cookie flow.
+  await prisma.user.create({
+    data: {
+      email: adminEmail,
+      fullName: 'PixSplit Admin Browser E2E',
+      passwordHash: await argon2.hash(adminPassword, { type: argon2.argon2id }),
+      role: 'SUPER_ADMIN',
+    },
+  });
+
+  await page.goto(WEB_ORIGIN + '/login', { waitUntil: 'domcontentloaded' });
+  await page.getByPlaceholder('voce@empresa.com').fill(adminEmail);
+  await page.getByPlaceholder('Sua senha').fill(adminPassword);
+  await page.getByRole('button', { name: /Entrar/ }).click();
+  await page.waitForURL('**/admin', { timeout: 60_000, waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Autenticação de dois fatores (TOTP)' }).waitFor({ state: 'visible', timeout: 30_000 });
+
+  const adminIdentity = await page.evaluate(async apiOrigin => {
+    const response = await fetch(apiOrigin + '/v1/me', {
+      credentials: 'include',
+      cache: 'no-store',
+    });
+    return { status: response.status, payload: await response.json() };
+  }, API_ORIGIN);
+  assert.equal(adminIdentity.status, 200, 'the admin layout must authenticate from the HttpOnly cookie');
+  assert.equal(adminIdentity.payload.role, 'SUPER_ADMIN', 'the admin panel must verify the superadmin role server-side');
+
+  const adminBrowserState = await page.evaluate(() => ({
+    marker: localStorage.getItem('pixsplit_authenticated'),
+    legacyToken: localStorage.getItem('token'),
+    oldToken: localStorage.getItem('pixsplit_token'),
+  }));
+  assert.equal(adminBrowserState.marker, '1', 'admin login must persist only the non-secret browser marker');
+  assert.equal(adminBrowserState.legacyToken, null, 'admin login must not persist a bearer token');
+  assert.equal(adminBrowserState.oldToken, null, 'admin login must not persist a legacy bearer token');
+
+  const adminCookies = await context.cookies(API_ORIGIN);
+  const adminSessionCookie = adminCookies.find(cookie => cookie.name === 'pixsplit_session');
+  assert.ok(adminSessionCookie, 'superadmin login must issue the HttpOnly session cookie');
+  assert.equal(adminSessionCookie.httpOnly, true);
+
+  await page.locator('button[aria-label="Sair da conta"]').first().click();
+  await page.waitForURL('**/login', { timeout: 30_000 });
+
+  const adminLogoutState = await page.evaluate(() => ({
+    marker: localStorage.getItem('pixsplit_authenticated'),
+    csrf: sessionStorage.getItem('pixsplit_csrf'),
+  }));
+  assert.equal(adminLogoutState.marker, null, 'admin logout clears the browser session marker');
+  assert.equal(adminLogoutState.csrf, null, 'admin logout clears the cached CSRF token');
+
+  const adminReplay = await fetch(API_ORIGIN + '/v1/me', {
+    headers: { cookie: `pixsplit_session=${adminSessionCookie.value}` },
+    cache: 'no-store',
+  });
+  assert.equal(adminReplay.status, 401, 'admin logout must revoke the old session server-side');
+
+  console.log('Browser auth E2E passed: merchant registration/session/CSRF/logout and superadmin cookie-only login/admin access/logout revocation.');
   console.log(`Test merchant: ${email}`);
+  console.log(`Test superadmin: ${adminEmail}`);
   await context.close();
 } finally {
   await browser.close();
   try {
-    await cleanupTestMerchant();
+    await cleanupTestUsers();
   } finally {
     await prisma.$disconnect();
   }

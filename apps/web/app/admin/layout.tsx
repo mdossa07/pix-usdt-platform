@@ -12,35 +12,63 @@ interface AdminUser {
   role: string;
 }
 
+function clearBrowserAuthState(): void {
+  localStorage.removeItem('pixsplit_authenticated');
+  localStorage.removeItem('pixsplit_token');
+  localStorage.removeItem('token');
+  sessionStorage.removeItem('pixsplit_csrf');
+}
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<AdminUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
+    let active = true;
+    const hasBrowserSessionMarker = localStorage.getItem('pixsplit_authenticated') === '1';
+
+    if (!hasBrowserSessionMarker) {
+      clearBrowserAuthState();
       router.replace('/login');
-      return;
+      setLoading(false);
+      return () => { active = false; };
     }
-    apiRequest<AdminUser>('/v1/me', {}, token)
-      .then((data: AdminUser) => {
+
+    // The marker only indicates that login completed. The actual identity and
+    // authorization are always verified by the API through the HttpOnly cookie.
+    apiRequest<AdminUser>('/v1/me')
+      .then(data => {
+        if (!active) return;
         if (data.role !== 'SUPER_ADMIN') {
-          router.replace('/merchant');
+          router.replace(data.role === 'MERCHANT' ? '/merchant' : '/');
           return;
         }
         setUser(data);
-        setLoading(false);
       })
       .catch(() => {
-        localStorage.removeItem('token');
+        if (!active) return;
+        clearBrowserAuthState();
         router.replace('/login');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
+
+    return () => { active = false; };
   }, [router]);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    router.replace('/login');
+  const handleLogout = async () => {
+    setLogoutError(null);
+    try {
+      // Server-side revocation must succeed before local state is cleared.
+      await apiRequest('/v1/auth/logout', { method: 'POST' });
+      clearBrowserAuthState();
+      router.replace('/login');
+    } catch {
+      setLogoutError('Não foi possível encerrar a sessão no servidor. Verifique a conexão e tente novamente.');
+    }
   };
 
   if (loading) {
@@ -62,7 +90,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </Link>
           <div className="pt-4 mt-4 border-t border-slate-800">
             <p className="px-4 text-xs uppercase tracking-wider text-slate-600 mb-2">Sistema</p>
-            <button onClick={handleLogout} className="w-full text-left px-4 py-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm">
+            <button onClick={handleLogout} aria-label="Sair da conta" className="w-full text-left px-4 py-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm">
               Sair
             </button>
           </div>
@@ -75,9 +103,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <main className="flex-1 overflow-auto">
         <header className="md:hidden border-b border-slate-800 p-4 flex items-center justify-between bg-slate-950/90 backdrop-blur sticky top-0 z-10">
           <span className="font-bold text-cyan-400">PixSplit Admin</span>
-          <button onClick={handleLogout} className="text-xs text-slate-400">Sair</button>
+          <button onClick={handleLogout} aria-label="Sair da conta" className="text-xs text-slate-400">Sair</button>
         </header>
         <div className="p-6 md:p-10 max-w-7xl mx-auto">
+          {logoutError && <p role="alert" className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{logoutError}</p>}
           {children}
         </div>
       </main>
