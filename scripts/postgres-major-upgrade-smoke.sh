@@ -176,7 +176,7 @@ fi
 
 # An insert without an explicit ID proves that pg_dump/pg_restore preserved
 # the identity sequence state, not just the table rows.
-next_identity="$(docker exec "$target_name" psql -U "$db_user" -d "$db_name" -At -v ON_ERROR_STOP=1 \
+next_identity="$(docker exec "$target_name" psql -U "$db_user" -d "$db_name" -qAt -v ON_ERROR_STOP=1 \
   -c "INSERT INTO migration_probe (marker, payload, amount_usdt)
       VALUES ('sequence-after-restore', '{}', 0)
       RETURNING id")"
