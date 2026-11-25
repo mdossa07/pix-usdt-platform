@@ -93,20 +93,16 @@ docker exec "$source_name" psql -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
       )" \
   -c "CREATE INDEX migration_probe_created_at_idx ON migration_probe(created_at)" >/dev/null
 
-source_parent_id="$(docker exec "$source_name" psql -U "$db_user" -d "$db_name" -At -v ON_ERROR_STOP=1 \
-  -c "INSERT INTO migration_probe (marker, payload, amount_usdt, created_at)
-      VALUES ('preserved-through-major-upgrade', '{\"source\":16,\"target\":18}', 123456789.12345678, '2026-11-25T00:00:00Z')
-      RETURNING id")"
-if [[ ! "$source_parent_id" =~ ^[0-9]+$ ]]; then
-  echo "Could not capture source identity value" >&2
-  exit 1
-fi
-
+# This database is created from a clean disposable cluster, so the first
+# generated identity is 1 and the second is 2. The child fixture references 1.
+# The target-side insert below must then return 3 after the logical restore.
 docker exec "$source_name" psql -U "$db_user" -d "$db_name" -v ON_ERROR_STOP=1 \
+  -c "INSERT INTO migration_probe (marker, payload, amount_usdt, created_at)
+      VALUES ('preserved-through-major-upgrade', '{\"source\":16,\"target\":18}', 123456789.12345678, '2026-11-25T00:00:00Z')" \
   -c "INSERT INTO migration_probe (marker, payload, amount_usdt, created_at)
       VALUES ('sequence-advance', '{\"source\":16,\"sequence\":2}', 0.00000001, '2026-11-25T00:01:00Z')" \
   -c "INSERT INTO migration_probe_child (parent_id, detail)
-      VALUES ($source_parent_id, 'foreign-key-preserved')" >/dev/null
+      VALUES (1, 'foreign-key-preserved')" >/dev/null
 
 # Use PostgreSQL 18's pg_dump client against the PostgreSQL 16 source.
 docker exec -e PGPASSWORD="$db_password" "$target_name" \
