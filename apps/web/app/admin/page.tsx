@@ -788,7 +788,8 @@ export default function AdminDashboard() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 id="pending-reservations-heading" className="text-lg font-semibold text-slate-900">Reservas HMAC sem cobrança persistida</h3>
-                <p className="text-sm text-slate-600">Referências que ficaram bloqueadas antes da criação de uma linha Payment e aguardam conferência externa</p>
+                <p className="text-sm text-slate-600">Referências que ficaram bloqueadas antes da criação de uma linha Payment e ainda aguardam a primeira conferência externa</p>
+                <p className="text-xs text-slate-500">Depois de registrar a revisão, o item sai desta fila, mas a reserva continua bloqueada e o registro permanece disponível na Auditoria.</p>
               </div>
               <button
                 type="button"

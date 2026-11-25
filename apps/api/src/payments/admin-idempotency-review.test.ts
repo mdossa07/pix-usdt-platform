@@ -64,6 +64,7 @@ test('pending reservation list is scoped, old-only, unresolved-only and enriched
   assert.equal(query.take, 100);
   assert.equal(query.where.scope, MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE);
   assert.deepEqual(query.where.responseJson, { equals: Prisma.DbNull });
+  assert.equal(query.where.lastReviewedAt, null);
   assert.deepEqual(query.where.createdAt, {
     lt: new Date(now.getTime() - MERCHANT_PAYMENT_RESERVATION_REVIEW_DELAY_MS),
   });
@@ -97,6 +98,7 @@ test('manual review is audited and keeps the reservation unresolved', async () =
   assert.equal(update.where.id, 'reservation-1');
   assert.equal(update.where.scope, MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE);
   assert.deepEqual(update.where.responseJson, { equals: Prisma.DbNull });
+  assert.equal(update.where.lastReviewedAt, null);
   assert.equal(update.data.lastReviewedByUserId, 'admin-1');
   assert.equal(update.data.lastReviewedAt, now);
   assert.equal(update.data.reviewNote, 'Provider portal checked; result still pending.');

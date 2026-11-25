@@ -36,6 +36,7 @@ export async function listPendingMerchantPaymentReservations(
       scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
       responseJson: { equals: Prisma.DbNull },
       createdAt: { lt: staleBefore },
+      lastReviewedAt: null,
     },
     orderBy: { createdAt: 'asc' },
     take: MAX_PENDING_RESERVATIONS,
@@ -106,6 +107,7 @@ export async function recordMerchantPaymentReservationReview(
         scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
         responseJson: { equals: Prisma.DbNull },
         createdAt: { lt: staleBefore },
+        lastReviewedAt: null,
       },
       data: {
         lastReviewedAt: now,

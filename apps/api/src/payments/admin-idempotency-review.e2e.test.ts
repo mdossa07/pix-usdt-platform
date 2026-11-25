@@ -146,8 +146,17 @@ describe('admin merchant payment reservation review queue', () => {
     });
     expect(audit).not.toBeNull();
 
-    const stillLocked = await listPendingMerchantPaymentReservations(prisma, new Date(now.getTime() + 1));
-    expect(stillLocked.map(item => item.id)).toContain(stale.id);
-    expect(stillLocked.find(item => item.id === stale.id)?.reviewNote).toContain('Provider portal checked');
+    const pendingAfterReview = await listPendingMerchantPaymentReservations(prisma, new Date(now.getTime() + 1));
+    expect(pendingAfterReview.map(item => item.id)).not.toContain(stale.id);
+
+    // The review leaves the idempotency reservation unresolved and locked;
+    // it only leaves the "awaiting review" queue after an audit record exists.
+    expect(persisted.responseJson).toBeNull();
+    expect(persisted.reviewNote).toContain('Provider portal checked');
+
+    const lockedRecord = await prisma.idempotencyRecord.findUniqueOrThrow({ where: { id: stale.id } });
+    expect(lockedRecord.responseJson).toBeNull();
+    expect(lockedRecord.lastReviewedAt).toBeInstanceOf(Date);
+    expect(lockedRecord.lastReviewedByUserId).toBe(admin.id);
   }, 20_000);
 });
