@@ -1100,13 +1100,18 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
       where: { id: parsed.data.endpointId, merchantId: merchant.id },
       select: { id: true, isEnabled: true },
     });
-    if (!endpoint) return null;
+    if (!endpoint) return { kind: 'not_found' as const };
     if (!endpoint.isEnabled) {
+      const activeCount = await tx.merchantWebhookEndpoint.count({
+        where: { merchantId: merchant.id, isEnabled: true },
+      });
+      if (activeCount >= 10) return { kind: 'limit_reached' as const };
+
       const updated = await tx.merchantWebhookEndpoint.updateMany({
         where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
         data: { isEnabled: true },
       });
-      if (updated.count !== 1) return null;
+      if (updated.count !== 1) return { kind: 'conflict' as const };
       await tx.auditEvent.create({
         data: {
           actorUserId: request.user.sub,
@@ -1117,11 +1122,13 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
         },
       });
     }
-    return { id: endpoint.id, isEnabled: true };
+    return { kind: 'enabled' as const, endpoint: { id: endpoint.id, isEnabled: true } };
   });
 
-  if (!result) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
-  return { success: true, endpoint: result };
+  if (result.kind === 'not_found') return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+  if (result.kind === 'limit_reached') return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+  if (result.kind === 'conflict') return reply.code(409).send({ error: 'webhook_endpoint_enable_conflict' });
+  return { success: true, endpoint: result.endpoint };
 });
 
 // Requeue the existing outbox row: eventId and payload remain unchanged.
