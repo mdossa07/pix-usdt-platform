@@ -1,18 +1,18 @@
-export const ADMIN_RESPONSE_CACHE_CONTROL = 'no-store';
-export const ADMIN_RESPONSE_PRAGMA = 'no-cache';
+export const API_RESPONSE_CACHE_CONTROL = 'no-store';
+export const API_RESPONSE_PRAGMA = 'no-cache';
 
-/** Match only API administrator routes, ignoring query parameters. */
-export function isAdminApiRoute(url: string): boolean {
+/** Match versioned API routes only; keep health, metrics, and static assets separate. */
+export function isVersionedApiRoute(url: string): boolean {
   const pathname = url.split('?', 1)[0] ?? '';
-  return pathname.startsWith('/v1/admin/');
+  return pathname.startsWith('/v1/');
 }
 
-/** Apply the private-response cache policy without changing other API routes. */
-export function applyAdminResponseCachePolicy(
+/** Prevent browsers and intermediary caches from storing versioned API responses. */
+export function applyVersionedApiResponseCachePolicy(
   url: string,
   setHeader: (name: string, value: string) => void,
 ): void {
-  if (!isAdminApiRoute(url)) return;
-  setHeader('Cache-Control', ADMIN_RESPONSE_CACHE_CONTROL);
-  setHeader('Pragma', ADMIN_RESPONSE_PRAGMA);
+  if (!isVersionedApiRoute(url)) return;
+  setHeader('Cache-Control', API_RESPONSE_CACHE_CONTROL);
+  setHeader('Pragma', API_RESPONSE_PRAGMA);
 }
