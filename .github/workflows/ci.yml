@@ -36,6 +36,9 @@ jobs:
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_URL: http://localhost:4000
       REDIS_URL: redis://localhost:6379
+      METRICS_BEARER_TOKEN: pixsplit-ci-observability-token-never-use-in-production-2026
+      PROMETHEUS_METRICS_TOKEN_FILE: /tmp/pixsplit-prometheus-metrics-token
+      GRAFANA_ADMIN_PASSWORD: PixSplit-CI-Only-Grafana-Pass-2026!
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,6 +47,22 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: cp .env.example .env
+      - name: Validate Prometheus configuration and alert rules
+        run: |
+          mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
+          printf '%s' "$METRICS_BEARER_TOKEN" > "$PROMETHEUS_METRICS_TOKEN_FILE"
+          chmod 644 "$PROMETHEUS_METRICS_TOKEN_FILE"
+          docker compose -f docker-compose.observability.yml config --quiet
+          docker run --rm --entrypoint=/bin/promtool \
+            -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
+            -v "$PROMETHEUS_METRICS_TOKEN_FILE:/run/secrets/prometheus_metrics_token:ro" \
+            prom/prometheus:v3.5.0 \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint=/bin/promtool \
+            -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:v3.5.0 \
+            check rules /etc/prometheus/alerts.yml
+          node -e "JSON.parse(require('node:fs').readFileSync('infra/grafana/dashboards/pixsplit-api.json', 'utf8'))"
       - run: pnpm db:generate
       - run: pnpm lint
       - name: Check Chromium E2E script syntax
@@ -80,6 +99,69 @@ jobs:
             cat /tmp/pixsplit-web.log
             exit 1
           fi
+      - name: Start Prometheus and Grafana observability stack
+        run: docker compose -f docker-compose.observability.yml up -d
+      - name: Verify Prometheus scrape and Grafana provisioning
+        run: |
+          prometheus_ready=false
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:9090/-/ready >/dev/null; then
+              prometheus_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$prometheus_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml logs
+            exit 1
+          fi
+
+          grafana_ready=false
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:3001/api/health >/dev/null; then
+              grafana_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$grafana_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml logs
+            exit 1
+          fi
+
+          scrape_ready=false
+          for attempt in $(seq 1 60); do
+            query="$(curl --silent --fail 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22pixsplit-api%22%7D' || true)"
+            if node -e "const data=JSON.parse(process.argv[1]); process.exit(data.data?.result?.[0]?.value?.[1] === '1' ? 0 : 1)" "$query"; then
+              scrape_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$scrape_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml logs
+            exit 1
+          fi
+
+          dashboard_ready=false
+          for attempt in $(seq 1 30); do
+            dashboard="$(curl --silent --fail --user "admin:$GRAFANA_ADMIN_PASSWORD" 'http://127.0.0.1:3001/api/search?query=PixSplit' || true)"
+            if node -e "try { const items=JSON.parse(process.argv[1]); process.exit(items.some(item => item.uid === 'pixsplit-api') ? 0 : 1) } catch { process.exit(1) }" "$dashboard"; then
+              dashboard_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$dashboard_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml logs
+            exit 1
+          fi
+
+          rules="$(curl --silent --fail 'http://127.0.0.1:9090/api/v1/rules?type=alert')"
+          node -e "const data=JSON.parse(process.argv[1]); process.exit(data.data?.groups?.some(group => group.name === 'pixsplit-api') ? 0 : 1)" "$rules"
+      - name: Stop observability stack
+        if: always()
+        run: docker compose -f docker-compose.observability.yml down
       - name: Run Chromium browser authentication E2E
         run: |
           mkdir -p /tmp/pixsplit-playwright
