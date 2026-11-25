@@ -9,7 +9,7 @@ import { PrismaClient, Prisma, WalletStatus, WalletType, PaymentStatus, Transfer
 import argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { config } from './config.js';
+import { APP_ORIGIN, config } from './config.js';
 import { encryptPii, decryptPii } from './security/crypto.js';
 import { buildTotpProvisioningUri, generateTotpSecret, matchTotpCounter } from './security/totp.js';
 import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecoveryCode } from './security/two-factor-recovery.js';
@@ -41,7 +41,6 @@ import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
-const APP_ORIGIN = new URL(config.APP_URL).origin;
 
 await app.register(helmet);
 await app.register(cors, { origin: APP_ORIGIN, credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'x-csrf-token'] });

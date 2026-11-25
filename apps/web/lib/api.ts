@@ -1,4 +1,6 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+import { resolveBrowserApiBaseUrl } from './api-url.js';
+
+export const API_BASE_URL = resolveBrowserApiBaseUrl(process.env.NEXT_PUBLIC_API_URL, process.env.NODE_ENV ?? 'development');
 
 const AUTH_COOKIE_CSRF_EXEMPT_PATHS = new Set([
   '/v1/auth/login',

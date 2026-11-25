@@ -9,6 +9,7 @@
 - Assinaturas de webhook são verificadas sobre o raw body, antes do parse JSON.
 - Rate limit, IP allowlist quando exigida, TLS, rotação de chaves, TOTP para superadministradores e trilha de auditoria.
 - Todas as respostas sob `/v1/admin/` recebem `Cache-Control: no-store` e `Pragma: no-cache` por hook global, para que novas rotas administrativas herdem a proteção contra cache sem depender de configuração manual.
+- Em produção, `APP_URL` (origem do painel/CORS/CSRF) e `NEXT_PUBLIC_API_URL` (endpoint público usado pelo navegador) devem usar HTTPS. O backend falha no startup com `PRODUCTION_APP_URL_MUST_USE_HTTPS` se a origem do painel for HTTP; o frontend falha no build/runtime com `PRODUCTION_NEXT_PUBLIC_API_URL_MUST_USE_HTTPS` (ou `PRODUCTION_NEXT_PUBLIC_API_URL_REQUIRED`) se o endpoint público não for HTTPS explícito. HTTP permanece permitido em desenvolvimento/teste local.
 - Alertas para destinatários novos, variações de rede, valores fora do perfil, repetição de cobranças e saques.
 - Bloquear pagamentos quando KYC, conta do provedor, rede, beneficiário ou Travel Rule estiverem pendentes/rejeitados.
 - Definir tratamento de chargeback, fraude, devolução PIX e ativos já enviados; não prometer reversão on-chain.

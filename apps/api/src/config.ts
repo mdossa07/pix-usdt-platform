@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { getPublicAppOrigin } from './security/public-origin.js';
 
 dotenv.config({ path: resolve(process.cwd(), '../../.env') });
 
@@ -31,6 +32,9 @@ const schema = z.object({
 });
 
 export const config = schema.parse(process.env);
+
+// Browser sessions use Secure cookies in production; fail before startup if the public origin is HTTP.
+export const APP_ORIGIN = getPublicAppOrigin(config.NODE_ENV, config.APP_URL);
 
 // Production can serve the application while financial execution remains mock-only.
 // Real/sandbox execution is blocked until conversion quotes, recipient registration,
