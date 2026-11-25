@@ -15,16 +15,19 @@ Na raiz do repositório:
 
 ```bash
 umask 077
-mkdir -p .secrets
+mkdir -m 700 -p .secrets
 openssl rand -hex 32 | tr -d '\\n' > .secrets/prometheus_metrics_token
-chmod 600 .secrets/prometheus_metrics_token
+# Prometheus runs as UID/GID 65534 (nobody). The file is readable by the
+# container process, while the parent directory remains private on the host.
+chmod 444 .secrets/prometheus_metrics_token
+chmod 700 .secrets
 ```
 
 Configure o mesmo conteúdo do arquivo como `METRICS_BEARER_TOKEN` no ambiente da API. Não commite o token e não o coloque no frontend, numa query string, no dashboard ou nos logs. O diretório `.secrets/` está no `.gitignore`.
 
 ## 2. Iniciar Prometheus e Grafana
 
-Exporte o caminho do segredo e a senha do administrador. O token do arquivo e o token injetado na API precisam ser idênticos:
+Exporte o caminho do segredo e a senha do administrador. O token do arquivo e o token injetado na API precisam ser idênticos. A imagem Prometheus executa como usuário `nobody`; o arquivo montado precisa ser legível por esse usuário. O diretório pai permanece restrito ao usuário do host (modo 700 em Linux/WSL). Em Windows/NTFS, aplique ACL privada equivalente ao diretório `.secrets` e use um caminho acessível pelo Docker Desktop.
 
 ```bash
 export PROMETHEUS_METRICS_TOKEN_FILE="$PWD/.secrets/prometheus_metrics_token"
