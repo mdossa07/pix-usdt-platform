@@ -30,6 +30,7 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
 import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
 import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
+import { hasMerchantWebhookEndpointCapacity } from './webhooks/outbound-endpoint-policy.js';
 import { requeueFailedMerchantWebhookDelivery } from './webhooks/outbound-retry.js';
 import { createHttpMetrics } from './observability/http-metrics.js';
 import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
@@ -967,10 +968,10 @@ app.post('/v1/merchant/webhooks', {
     });
   }
 
-  const activeCount = await prisma.merchantWebhookEndpoint.count({
-    where: { merchantId: merchant.id, isEnabled: true },
-  });
-  if (activeCount >= 10) return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+  const endpointCapacity = await prisma.$transaction(tx =>
+    hasMerchantWebhookEndpointCapacity(tx, merchant.id),
+  );
+  if (!endpointCapacity) return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
 
   const signingSecret = randomBytes(32).toString('base64url');
   const endpoint = await prisma.merchantWebhookEndpoint.create({
@@ -1102,10 +1103,8 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
     });
     if (!endpoint) return { kind: 'not_found' as const };
     if (!endpoint.isEnabled) {
-      const activeCount = await tx.merchantWebhookEndpoint.count({
-        where: { merchantId: merchant.id, isEnabled: true },
-      });
-      if (activeCount >= 10) return { kind: 'limit_reached' as const };
+      const hasCapacity = await hasMerchantWebhookEndpointCapacity(tx, merchant.id);
+      if (!hasCapacity) return { kind: 'limit_reached' as const };
 
       const updated = await tx.merchantWebhookEndpoint.updateMany({
         where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
