@@ -31,14 +31,10 @@ jobs:
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://pixsplit_test:pixsplit_test_pass@localhost:5433/pixsplit_test?schema=public
-      JWT_SECRET: pixsplit-test-jwt-secret-at-least-32-characters
-      PII_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_API_URL: http://localhost:4000
       REDIS_URL: redis://localhost:6379
-      METRICS_BEARER_TOKEN: pixsplit-ci-observability-token-never-use-in-production-2026
       PROMETHEUS_METRICS_TOKEN_FILE: /tmp/pixsplit-prometheus-metrics-token
-      GRAFANA_ADMIN_PASSWORD: PixSplit-CI-Only-Grafana-Pass-2026!
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -47,6 +43,15 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: cp .env.example .env
+      - name: Generate ephemeral CI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in JWT_SECRET PII_ENCRYPTION_KEY METRICS_BEARER_TOKEN GRAFANA_ADMIN_PASSWORD; do
+            value="$(openssl rand -hex 32)"
+            echo "::add-mask::$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done
       - name: Validate Prometheus configuration and alert rules
         run: |
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
