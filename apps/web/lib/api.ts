@@ -1,4 +1,4 @@
-import { resolveBrowserApiBaseUrl } from './api-url.js';
+import { resolveBrowserApiBaseUrl } from './api-url';
 
 export const API_BASE_URL = resolveBrowserApiBaseUrl(process.env.NEXT_PUBLIC_API_URL, process.env.NODE_ENV ?? 'development');
 
