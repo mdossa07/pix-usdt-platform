@@ -23,11 +23,8 @@ interface PaymentRecord {
 interface PendingReservationRecord {
   id: string;
   externalId: string;
-  merchantId: string | null;
   merchantName: string | null;
-  merchantEmail: string | null;
   amountBrlCents: string | null;
-  walletDestinationId: string | null;
   createdAt: string;
   lastReviewedAt: string | null;
   reviewNote: string | null;
@@ -833,7 +830,6 @@ export default function AdminDashboard() {
                         </td>
                         <td className="px-4 py-3 text-xs text-slate-700">
                           {reservation.merchantName ?? 'Registro legado'}
-                          <div className="mt-1 text-slate-500">{reservation.merchantEmail ?? 'Dados do comerciante indisponíveis nesta reserva antiga'}</div>
                         </td>
                         <td className="px-4 py-3 text-slate-800">
                           {reservation.amountBrlCents ? formatBrl(reservation.amountBrlCents) : '—'}

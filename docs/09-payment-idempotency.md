@@ -50,6 +50,7 @@ A implementação é fail-closed e não habilita integração sandbox/live. O ad
 - A ação **Registrar revisão** grava nota, data, responsável e evento de auditoria. A nota deve conter apenas o que foi conferido e a referência/status não sensível do portal do provedor; nunca inclua CPF, credenciais, tokens ou segredos. O backend também bloqueia formatos reconhecíveis de CPF/CNPJ, e-mail, telefone, bearer/API keys e cabeçalhos de chave privada antes de persistir a nota; notas rejeitadas retornam HTTP 400 e não criam evento de auditoria.
 - Registrar uma revisão **não conclui, apaga, expira nem libera** a reserva. O bloqueio permanece até que uma integração de consulta oficial e homologada consiga provar o estado da cobrança. Não existe retry automático nem botão de desbloqueio nesta fila.
 - A fila contém somente reservas ainda não revisadas (`lastReviewedAt IS NULL`), com no máximo 100 itens por consulta. Ao registrar a primeira revisão, o item sai da fila de pendências para que os próximos registros antigos avancem; a reserva continua sem resposta e bloqueada. A nota e o responsável permanecem no banco e no log de auditoria. A atualização condicional exige que a reserva ainda não tenha sido revisada.
+- A resposta da fila administrativa usa minimização de dados: não devolve e-mail do comerciante, `merchantId` nem `walletDestinationId`; o nome legal pode ser mostrado para identificação operacional. A consulta e o registro de revisão retornam `Cache-Control: no-store`, evitando armazenamento por navegador ou cache intermediário.
 
 
 ## Retenção

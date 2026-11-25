@@ -56,7 +56,6 @@ test('pending reservation list is scoped, old-only, unresolved-only and enriched
     merchants: [{
       id: 'merchant-1',
       legalName: 'Merchant Example',
-      user: { email: 'merchant@example.test' },
     }],
   });
 
@@ -70,14 +69,14 @@ test('pending reservation list is scoped, old-only, unresolved-only and enriched
     lt: new Date(now.getTime() - MERCHANT_PAYMENT_RESERVATION_REVIEW_DELAY_MS),
   });
   assert.equal(result.length, 1);
+  assert.equal(Object.hasOwn(result[0]!, 'merchantEmail'), false);
+  assert.equal(Object.hasOwn(result[0]!, 'walletDestinationId'), false);
+  assert.equal(Object.hasOwn(result[0]!, 'merchantId'), false);
   assert.deepEqual(result[0], {
     id: 'reservation-1',
     externalId: 'merchant-external-123',
-    merchantId: 'merchant-1',
     merchantName: 'Merchant Example',
-    merchantEmail: 'merchant@example.test',
     amountBrlCents: '12500',
-    walletDestinationId: 'wallet-1',
     createdAt,
     lastReviewedAt: null,
     reviewNote: null,

@@ -39,11 +39,8 @@ export function containsSensitiveMerchantPaymentReviewNote(note: string): boolea
 export interface PendingMerchantPaymentReservation {
   id: string;
   externalId: string;
-  merchantId: string | null;
   merchantName: string | null;
-  merchantEmail: string | null;
   amountBrlCents: string | null;
-  walletDestinationId: string | null;
   createdAt: Date;
   lastReviewedAt: Date | null;
   reviewNote: string | null;
@@ -75,7 +72,6 @@ export async function listPendingMerchantPaymentReservations(
       key: true,
       merchantId: true,
       amountBrlCents: true,
-      walletDestinationId: true,
       createdAt: true,
       lastReviewedAt: true,
       reviewNote: true,
@@ -89,7 +85,6 @@ export async function listPendingMerchantPaymentReservations(
       select: {
         id: true,
         legalName: true,
-        user: { select: { email: true } },
       },
     })
     : [];
@@ -100,11 +95,8 @@ export async function listPendingMerchantPaymentReservations(
     return {
       id: record.id,
       externalId: record.key,
-      merchantId: record.merchantId,
       merchantName: merchant?.legalName ?? null,
-      merchantEmail: merchant?.user.email ?? null,
       amountBrlCents: record.amountBrlCents?.toString() ?? null,
-      walletDestinationId: record.walletDestinationId,
       createdAt: record.createdAt,
       lastReviewedAt: record.lastReviewedAt,
       reviewNote: record.reviewNote,
