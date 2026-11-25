@@ -32,7 +32,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Workflow Dependency Review preparado; sua ativação automática aguarda o proprietário habilitar Dependency Graph nas configurações do GitHub (PR #28).
 - [x] Reconciliação de payout `SUBMITTED` ambíguo após 30 minutos, consulta pela referência original, single-flight local, deduplicação e testes de fila (PR #43).
 - [x] Coordenação da reconciliação entre réplicas com advisory lock transacional PostgreSQL e lote máximo de 25 pagamentos (PR #47; CI e Security aprovados).
-- [ ] Teste E2E em PostgreSQL real com dois clientes Prisma independentes para validar aquisição, contenção e liberação do advisory lock (PR #49; CI em andamento).
+- [x] Teste E2E em PostgreSQL real com dois clientes Prisma independentes para validar aquisição, contenção e liberação do advisory lock (PR #49; 45/45 etapas CI, CodeQL e Gitleaks aprovados).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
