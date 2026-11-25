@@ -43,32 +43,40 @@ test('reconciliation pages one OR query and enqueues each matching payment once'
   assert.equal(new Set(enqueued.map(item => item.id)).size, 5);
   assert.equal(calls.length, 3, 'five payments should be read in three bounded pages');
 
-  const firstQuery = calls[0];
+  const firstQuery = calls.at(0);
+  assert.ok(firstQuery);
   assert.equal(firstQuery.take, 2);
   assert.deepEqual(firstQuery.orderBy, { id: 'asc' });
   assert.equal(firstQuery.cursor, undefined);
   assert.equal(firstQuery.skip, undefined);
 
-  assert.deepEqual(calls[1].cursor, { id: 'payment-2' });
-  assert.equal(calls[1].skip, 1);
-  assert.deepEqual(calls[2].cursor, { id: 'payment-4' });
-  assert.equal(calls[2].skip, 1);
+  const secondQuery = calls.at(1);
+  assert.ok(secondQuery);
+  assert.deepEqual(secondQuery.cursor, { id: 'payment-2' });
+  assert.equal(secondQuery.skip, 1);
+  const thirdQuery = calls.at(2);
+  assert.ok(thirdQuery);
+  assert.deepEqual(thirdQuery.cursor, { id: 'payment-4' });
+  assert.equal(thirdQuery.skip, 1);
 
   const conditions = firstQuery.where?.OR;
   assert.ok(Array.isArray(conditions));
   assert.equal(conditions.length, 5, 'recovery criteria must be combined in one unique payment query');
 
-  const earlyStale = conditions[0] as Prisma.PaymentWhereInput;
+  const earlyStale = conditions.at(0);
+  assert.ok(earlyStale);
   assert.deepEqual(earlyStale.status, {
     in: [PaymentStatus.PIX_CONFIRMED, PaymentStatus.CONVERSION_PENDING, PaymentStatus.CRYPTO_CREDITED],
   });
   assert.deepEqual(earlyStale.updatedAt, { lt: new Date('2026-11-25T14:55:00.000Z') });
 
-  const merchantProcessing = conditions[1] as Prisma.PaymentWhereInput;
+  const merchantProcessing = conditions.at(1);
+  assert.ok(merchantProcessing);
   assert.equal(merchantProcessing.merchantTransferStatus, TransferStatus.PROCESSING);
   assert.deepEqual(merchantProcessing.updatedAt, { lt: new Date('2026-11-25T14:30:00.000Z') });
 
-  const platformProcessing = conditions[2] as Prisma.PaymentWhereInput;
+  const platformProcessing = conditions.at(2);
+  assert.ok(platformProcessing);
   assert.equal(platformProcessing.platformTransferStatus, TransferStatus.PROCESSING);
   assert.deepEqual(platformProcessing.updatedAt, { lt: new Date('2026-11-25T14:30:00.000Z') });
 });
