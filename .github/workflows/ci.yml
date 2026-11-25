@@ -247,4 +247,9 @@ jobs:
           DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run admin TOTP recovery integration scenarios
         run: DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec vitest run src/security/two-factor-recovery.e2e.test.ts
-      - run: pnpm build
+      - name: Build production artifacts
+        run: pnpm build
+        env:
+          # Next.js uses NODE_ENV=production for builds; use an HTTPS-only placeholder here.
+          # Runtime deployments must provide their actual public HTTPS API origin.
+          NEXT_PUBLIC_API_URL: https://api.pixsplit.invalid
