@@ -1,5 +1,4 @@
 import { Prisma, PrismaClient, PaymentStatus, TransferStatus } from '@prisma/client';
-import { enqueueSettlement } from '../queues/producers.js';
 
 const DEFAULT_BATCH_SIZE = 100;
 const STALE_AFTER_MS = 5 * 60 * 1000;
@@ -23,7 +22,7 @@ export class ReconciliationService {
 
   constructor(
     private readonly prisma: ReconciliationDatabase,
-    private readonly enqueue: SettlementEnqueuer = enqueueSettlement,
+    private readonly enqueue: SettlementEnqueuer,
     private readonly now: () => Date = () => new Date(),
     private readonly batchSize = DEFAULT_BATCH_SIZE,
   ) {
