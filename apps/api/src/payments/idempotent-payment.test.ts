@@ -34,3 +34,27 @@ test('hashes a canonical payment body independent of optional description whites
   assert.equal(first, same);
   assert.notEqual(first, differentAmount);
 });
+
+test('merchant payment request fingerprint normalizes text and keys personal data', () => {
+  const input = {
+    merchantId: 'merchant-1',
+    externalId: 'external-123',
+    amountBrlCents: 5000,
+    walletDestinationId: 'wallet-1',
+    payerName: '  Test Payer  ',
+    payerTaxId: '12345678909',
+    description: '  Checkout  ',
+  };
+  const key = 'a'.repeat(64);
+  const normalized = { ...input, payerName: 'Test Payer', description: 'Checkout' };
+
+  assert.equal(hashMerchantPaymentRequest(input, key), hashMerchantPaymentRequest(normalized, key));
+  assert.notEqual(
+    hashMerchantPaymentRequest(input, key),
+    hashMerchantPaymentRequest({ ...input, payerTaxId: '98765432100' }, key),
+  );
+  assert.notEqual(
+    hashMerchantPaymentRequest(input, key),
+    hashMerchantPaymentRequest(input, 'b'.repeat(64)),
+  );
+});
