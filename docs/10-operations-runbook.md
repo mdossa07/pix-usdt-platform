@@ -136,6 +136,7 @@ printf '%s' "$ALERTMANAGER_WEBHOOK_URL" > .secrets/alertmanager_webhook_url
 unset ALERTMANAGER_WEBHOOK_URL
 chmod 600 .secrets/alertmanager_webhook_url
 export ALERTMANAGER_WEBHOOK_URL_FILE="$PWD/.secrets/alertmanager_webhook_url"
+node scripts/validate-alertmanager-webhook-url.mjs
 ```
 
 2. Valide a configuração e suba o stack com o overlay:
