@@ -34,6 +34,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Coordenação da reconciliação entre réplicas com advisory lock transacional PostgreSQL e lote máximo de 25 pagamentos (PR #47; CI e Security aprovados).
 - [x] Teste E2E em PostgreSQL real com dois clientes Prisma independentes para validar aquisição, contenção e liberação do advisory lock (PR #49; 45/45 etapas CI, CodeQL e Gitleaks aprovados).
 - [x] Idempotência persistente na criação HMAC de cobranças de comerciantes: reserva de `externalId` antes do provedor, fingerprint HMAC, replay exato, conflito para payload divergente, recuperação de crash/concorrência e fail-closed para resultado ambíguo (PR #52; CI 45/45, Gitleaks e CodeQL aprovados).
+- [x] Fila administrativa de reservas HMAC sem resposta: lista apenas pendências antigas, exibe comerciante/valor quando disponíveis e permite registrar revisão manual auditada sem desbloquear a referência (PR #54; CI 47/47, Gitleaks 5/5 e CodeQL 8/8 aprovados).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação

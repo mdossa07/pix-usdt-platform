@@ -332,22 +332,14 @@ model LedgerEntry {
 }
 
 model IdempotencyRecord {
-  id                   String   @id @default(cuid())
-  scope                String
-  key                  String
-  requestHash          String
-  responseJson         Json?
-  merchantId           String?
-  amountBrlCents       BigInt?
-  walletDestinationId  String?
-  lastReviewedAt       DateTime?
-  lastReviewedByUserId String?
-  reviewNote           String?
-  createdAt            DateTime @default(now())
-  expiresAt            DateTime?
+  id           String   @id @default(cuid())
+  scope        String
+  key          String
+  requestHash  String
+  responseJson Json?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime?
   @@unique([scope, key])
-  @@index([scope, createdAt])
-  @@index([merchantId, createdAt])
 }
 
 model AuditEvent {

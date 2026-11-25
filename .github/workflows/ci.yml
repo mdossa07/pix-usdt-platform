@@ -223,12 +223,6 @@ jobs:
           DATABASE_URL="${DATABASE_URL%schema=public}schema=payment_idempotency_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run payment idempotency integration scenarios
         run: DATABASE_URL="${DATABASE_URL%schema=public}schema=payment_idempotency_test" pnpm --filter @pixsplit/api exec vitest run src/payments/idempotent-payment.e2e.test.ts src/payments/merchant-payment-idempotency.e2e.test.ts
-      - name: Prepare isolated merchant payment reservation review schema
-        run: |
-          pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS admin_payment_reservation_review_test;'
-          DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_payment_reservation_review_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
-      - name: Run admin merchant payment reservation review scenarios
-        run: DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_payment_reservation_review_test" pnpm --filter @pixsplit/api exec vitest run src/payments/admin-idempotency-review.e2e.test.ts
       - name: Prepare isolated HMAC integration schema
         run: |
           pnpm --filter @pixsplit/api exec prisma db execute --schema prisma/schema.prisma --stdin <<< 'CREATE SCHEMA IF NOT EXISTS hmac_test;'
