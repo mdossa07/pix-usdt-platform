@@ -57,6 +57,10 @@ Web: http://localhost:3000
 API liveness: http://localhost:4000/health
 API readiness (PostgreSQL + Redis): http://localhost:4000/ready
 
+## Implantação em produção
+
+A topologia Railway e os comandos de build/start/migrations por serviço estão documentados em [`docs/DEPLOY_AND_SECURITY.md`](docs/DEPLOY_AND_SECURITY.md#railway-deployment--monorepo-compartilhado). A API e a Web compartilham a raiz do monorepo; não use `apps/api` ou `apps/web` como Root Directory. A plataforma permanece `PAYMENTS_MODE=mock` até a conclusão dos gates de provedor e compliance.
+
 ## Criar usuário superadministrador
 
 Após o banco estar migrado, crie o primeiro administrador pelo terminal (a senha deve ter pelo menos 16 caracteres):
