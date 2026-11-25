@@ -16,7 +16,7 @@ import { consumeRecoveryCode, generateRecoveryCodes, hashRecoveryCode, isRecover
 import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest, readCookie, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from './security/session-cookie.js';
 import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
 import { isAuthSessionActive } from './security/session-store.js';
-import { applyAdminResponseCachePolicy } from './security/admin-response-cache.js';
+import { applyVersionedApiResponseCachePolicy } from './security/admin-response-cache.js';
 import { sanitizeAdminAuditMetadata } from './security/admin-audit-metadata.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
@@ -56,7 +56,7 @@ app.addHook('onRequest', async request => {
   requestStartedAt.set(request, process.hrtime.bigint());
 });
 app.addHook('onSend', async (request, reply, payload) => {
-  applyAdminResponseCachePolicy(request.url, (name, value) => reply.header(name, value));
+  applyVersionedApiResponseCachePolicy(request.url, (name, value) => reply.header(name, value));
   return payload;
 });
 app.addHook('onResponse', async (request, reply) => {
