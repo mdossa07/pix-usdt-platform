@@ -1,0 +1,26 @@
+services:
+  postgres18-migration:
+    image: postgres:18-alpine
+    profiles: ["postgres18-migration"]
+    container_name: pixsplit-postgres18-migration
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-pixsplit}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      # PostgreSQL 18+ official images use a major-version-specific PGDATA
+      # under /var/lib/postgresql; do not mount the old PG16 volume here.
+      - pixsplit_pg18_migration:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-pixsplit}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pixsplit_pg18_migration:
