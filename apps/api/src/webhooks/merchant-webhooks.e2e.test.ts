@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMerchantWebhookDeliveries } from './outbound-outbox.js';
+import { requeueFailedMerchantWebhookDelivery } from './outbound-retry.js';
 
 const databaseUrl = new URL(process.env.DATABASE_URL!);
 databaseUrl.searchParams.set('schema', 'merchant_webhooks_test');
@@ -205,4 +206,88 @@ describe('transactional merchant webhook outbox', () => {
     });
     expect(rolledBack).toHaveLength(2);
   }, 20_000);
+  it('requeues only failed deliveries while preserving the event ID and payload', async () => {
+    const eventId = randomUUID();
+    const originalPayload = {
+      id: eventId,
+      type: 'payment.status_changed',
+      data: { paymentId, status: 'UNDER_REVIEW', amountBrlCents: '12345' },
+    };
+    const failed = await prisma.merchantWebhookDelivery.create({
+      data: {
+        endpointId: createdEndpointId,
+        eventName: 'payment.status_changed',
+        eventId,
+        payload: originalPayload,
+        status: 'FAILED',
+        attempts: 8,
+        nextAttemptAt: new Date(Date.now() + 60_000),
+        lastErrorCode: 'webhook_timeout',
+        responseStatus: null,
+      },
+    });
+
+    const outcome = await prisma.$transaction(tx =>
+      requeueFailedMerchantWebhookDelivery(tx, {
+        merchantId,
+        endpointId: createdEndpointId,
+        deliveryId: failed.id,
+      }),
+    );
+    expect(outcome.kind).toBe('requeued');
+    if (outcome.kind !== 'requeued') throw new Error('failed_delivery_was_not_requeued');
+    expect(outcome.eventId).toBe(eventId);
+
+    const stored = await prisma.merchantWebhookDelivery.findUniqueOrThrow({ where: { id: failed.id } });
+    expect(stored.status).toBe('PENDING');
+    expect(stored.attempts).toBe(0);
+    expect(stored.eventId).toBe(eventId);
+    expect(stored.payload).toEqual(originalPayload);
+    expect(stored.lastErrorCode).toBeNull();
+    expect(stored.responseStatus).toBeNull();
+    expect(stored.lockedAt).toBeNull();
+    expect(stored.deliveredAt).toBeNull();
+
+    const pendingRetry = await prisma.$transaction(tx =>
+      requeueFailedMerchantWebhookDelivery(tx, {
+        merchantId,
+        endpointId: createdEndpointId,
+        deliveryId: failed.id,
+      }),
+    );
+    expect(pendingRetry).toEqual({ kind: 'not_failed', currentStatus: 'PENDING' });
+  }, 20_000);
+
+  it('does not retry disabled endpoints or deliveries owned by another merchant', async () => {
+    const disabledEventId = randomUUID();
+    const disabledDelivery = await prisma.merchantWebhookDelivery.create({
+      data: {
+        endpointId: disabledEndpointId,
+        eventName: 'payment.created',
+        eventId: disabledEventId,
+        payload: { id: disabledEventId, type: 'payment.created', data: { paymentId } },
+        status: 'FAILED',
+        attempts: 8,
+        lastErrorCode: 'webhook_endpoint_disabled',
+      },
+    });
+    const disabledOutcome = await prisma.$transaction(tx =>
+      requeueFailedMerchantWebhookDelivery(tx, {
+        merchantId,
+        endpointId: disabledEndpointId,
+        deliveryId: disabledDelivery.id,
+      }),
+    );
+    expect(disabledOutcome).toEqual({ kind: 'endpoint_disabled' });
+
+    const otherMerchantOutcome = await prisma.$transaction(tx =>
+      requeueFailedMerchantWebhookDelivery(tx, {
+        merchantId: 'merchant-not-owned',
+        endpointId: createdEndpointId,
+        deliveryId: disabledDelivery.id,
+      }),
+    );
+    expect(otherMerchantOutcome).toEqual({ kind: 'not_found' });
+  }, 20_000);
+
 });
