@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { hashPaymentCreationRequest, isValidIdempotencyKey } from './idempotent-payment.js';
+import { hashMerchantPaymentRequest } from './merchant-payment-idempotency.js';
 
 test('accepts sufficiently long printable idempotency keys', () => {
   assert.equal(isValidIdempotencyKey('550e8400-e29b-41d4-a716-446655440000'), true);
