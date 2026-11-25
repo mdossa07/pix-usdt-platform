@@ -87,7 +87,34 @@ Este fluxo ainda precisa de aprovação formal e de configuração operacional.
 
 **Não implementar um bypass de MFA** como mecanismo de break-glass. Recuperação deve preservar a separação de funções e a trilha de auditoria.
 
-## 8. Deploy e rollback
+## 8. Métricas Prometheus e scrape
+
+O endpoint `GET /metrics` só existe para scrapes autenticados quando `METRICS_BEARER_TOKEN` está configurado com 32 a 256 caracteres ASCII visíveis. Sem segredo, responde 404; token ausente/incorreto responde 401. O segredo deve ficar no secret manager do ambiente e nunca ser colocado em painel, frontend, query string ou repositório.
+
+Métricas exportadas:
+- `pixsplit_http_requests_total`: contador por método, template de rota e status HTTP.
+- `pixsplit_http_request_duration_seconds`: histograma de duração por método, template de rota e status.
+- `pixsplit_process_uptime_seconds`, `pixsplit_process_resident_memory_bytes` e `pixsplit_process_heap_used_bytes`.
+
+Os labels de rota usam somente `request.routeOptions.url` (template Fastify). IDs, CPF, e-mail, query strings e URLs desconhecidas não são labels; rotas não correspondidas aparecem como `unmatched`. As métricas ficam em memória por processo, sem estado persistente nem dependência adicional. Em múltiplas réplicas, configure um scrape por réplica e agregue no Prometheus.
+
+Exemplo ilustrativo de scrape config (usar o mecanismo de secret file do ambiente; não inserir o valor no YAML):
+
+```yaml
+scrape_configs:
+  - job_name: pixsplit-api
+    metrics_path: /metrics
+    scrape_interval: 15s
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/pixsplit_metrics_token
+    static_configs:
+      - targets: ["pixsplit-api:4000"]
+```
+
+O scrape token deve ser gerado aleatoriamente, ter pelo menos 32 caracteres e ser provisionado no secret manager. Restringir também o acesso de rede à porta da API para que somente o Prometheus possa consultar `/metrics`. Configurar alertas e retenção no ambiente de monitoramento; o endpoint por si só não instala nem opera Prometheus.
+
+## 9. Deploy e rollback
 
 1. Confirmar aprovação de release, revisão de código, CI verde e hash do commit.
 2. Fazer backup PostgreSQL consistente e testar leitura/verificação do artefato antes da migração.
@@ -99,7 +126,7 @@ Este fluxo ainda precisa de aprovação formal e de configuração operacional.
 8. Em falha, interromper rollout e fazer rollback da aplicação. Não tentar desfazer migração destrutiva manualmente; restaurar conforme plano de recuperação testado.
 9. Reconciliar pagamentos pendentes antes de retomar o processamento.
 
-## 9. Evidências e encerramento
+## 10. Evidências e encerramento
 
 Cada incidente deve guardar: ID, severidade, impacto, timestamps, serviços afetados, commit/versão, IDs externos, hashes, decisões, aprovadores, ações, resultado, causa raiz e tarefas preventivas. Remover PII desnecessária e armazenar o registro no repositório de incidentes com acesso restrito.
 
