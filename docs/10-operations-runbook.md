@@ -149,6 +149,7 @@ docker run --rm --entrypoint=amtool \
   check-config /etc/alertmanager/alertmanager.yml
 
 docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml config --quiet
+docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml run --rm webhook-url-preflight
 docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml up -d
 ```
 
