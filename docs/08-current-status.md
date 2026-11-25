@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**73% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O ajuste para 72% considera a entrega e integração do stack local de observabilidade (Prometheus/Grafana) e o endurecimento adicional do bloqueio SSRF para prefixos IPv6 NAT64 (PRs #20 e #19).
+**73% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O avanço contabiliza a proteção SSRF para NAT64 (PR #19), a stack local Prometheus/Grafana (PR #20), o guard do painel superadmin por sessão HttpOnly com E2E Chromium (PR #22) e a recuperação manual e auditada de entregas de webhook (PR #23). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -19,6 +19,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Proteção CSRF em mutações autenticadas por cookie.
 - TOTP RFC 6238, códigos de recuperação armazenados como hashes e MFA obrigatório para superadministradores.
 - Sessões persistidas em PostgreSQL, revogação centralizada, logout e encerramento individual/global de sessões.
+- O layout administrativo valida identidade em `/v1/me` via cookie HttpOnly, exige `SUPER_ADMIN` e encerra a sessão pelo endpoint de logout; PR #22 cobre login sem bearer token, acesso ao painel e revogação em Chromium.
 - Middleware revalida usuário ativo e papel atual no PostgreSQL em rotas autenticadas.
 
 ### Pagamentos e ledger
@@ -59,13 +60,19 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #18 — E2E real em Chromium para autenticação, cookies HttpOnly, CSRF e revogação; integrado.
 - PR #19 — bloqueio explícito de prefixos NAT64 no filtro SSRF; integrado em `3c94594`.
 - PR #20 — stack Prometheus/Grafana, dashboard, alertas e smoke tests; integrado em `761d078`.
+- PR #21 — status/roadmap atualizado após os marcos de observabilidade e SSRF; integrado em `b9e91c8`.
+- PR #22 — guard administrativo HttpOnly, roteamento por papel e E2E Chromium de superadmin; integrado em `f6238f2`.
+- PR #23 — reativação de endpoint e retry manual seguro de webhooks `FAILED`, preservando evento/payload; integrado em `f865f64`.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
 - [CI do PR #19 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45519035765).
 - [CI pós-merge do PR #18 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45518472158).
+- [CI do PR #22 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625231839).
+- [CI do PR #22 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625264032).
+- [CI pós-merge do PR #23 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625664517).
 
-O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build e E2E de navegador. O CI do merge commit #19 deve ser confirmado separadamente; não considerar esse run concluído antes do estado terminal.
+O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
 ## Bloqueios — não habilitar dinheiro real
 
@@ -113,3 +120,12 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 **Progresso global estimado: 73%.**
 
 O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
+
+
+## Entrega validada — autenticação administrativa e retry de webhooks — 25/11/2026
+
+- PR #22: login de superadministrador pelo cookie HttpOnly; o servidor confirma a identidade em `/v1/me`, valida o papel `SUPER_ADMIN` e revoga sessão no logout. E2E Chromium confirmou ausência de bearer token no `localStorage` e rejeição da sessão antiga após logout.
+- PR #23: comerciante pode reativar o próprio endpoint e reenfileirar apenas entregas `FAILED`; mantém o mesmo `eventId` e payload, valida ownership, usa compare-and-set, limita tentativas e grava auditoria.
+- Ambos os recursos estão integrados em `master`; CI de PR #22 e pós-merge de PR #23 aprovados.
+
+**Progresso global estimado: 73%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
