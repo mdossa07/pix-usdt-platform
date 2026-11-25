@@ -18,7 +18,9 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Cliente TransFi v3 tipado e testes de contrato; não habilitado como adaptador de pagamentos.
 - [x] Métricas Prometheus protegidas por Bearer.
 - [x] Overlay local Prometheus + Grafana, dashboard provisionado, alertas iniciais e smoke tests no CI (PR #20).
-- [x] CI com lint/typecheck, unitários, integrações PostgreSQL, migrações, build e E2E de autenticação em Chromium.
+- [x] CI com lint/typecheck, unitários, integrações PostgreSQL, migrações, build e E2E Chromium de comerciante e superadministrador.
+- [x] Guard do painel superadmin por cookie HttpOnly, validação server-side do papel e logout com revogação (PR #22).
+- [x] Retry manual de entregas de webhook `FAILED`, com ownership, compare-and-set, rate limit, auditoria e preservação do evento/payload (PR #23).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
