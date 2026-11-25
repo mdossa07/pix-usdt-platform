@@ -11,7 +11,10 @@ A documentação oficial do PostgreSQL classifica 16→18 como atualização maj
 ## O que está implementado neste repositório
 
 - `docker-compose.postgres18-migration.yml` define um serviço de ensaio separado, com volume novo `pixsplit_pg18_migration`, porta local 5434 e montagem em `/var/lib/postgresql`.
-- `scripts/postgres-major-upgrade-smoke.sh` inicia clusters descartáveis PostgreSQL 16 e 18, cria dados de prova, faz dump custom-format usando o cliente 18, restaura no 18 e valida a linha e o JSONB.
+- `scripts/postgres-major-upgrade-smoke.sh` inicia clusters descartáveis PostgreSQL 16 e 18, cria um schema representativo, faz dump custom-format usando o cliente 18 e restaura no 18.
+- O fixture valida chave primária, identity e estado da sequência, chave estrangeira e linha relacionada, constraint `UNIQUE`, constraint `CHECK`, índice, JSONB, texto e precisão exata de `numeric(28,8)`.
+- Após o restore, o script insere uma nova linha sem informar o ID e exige o próximo valor esperado da identity; isso verifica que a sequência foi restaurada, não apenas as linhas da tabela.
+- A cobertura é deliberadamente representativa e descartável. Ela não prova compatibilidade de todas as tabelas reais, extensões, roles/grants, collations, volume de produção, downtime ou procedimentos específicos de cutover.
 - O ensaio não monta, lê, modifica, renomeia nem remove `pixsplit_pg` ou `pixsplit_redis`.
 - O CI executa o ensaio em cada push e pull request.
 
@@ -27,6 +30,7 @@ Saída esperada:
 
 ```text
 PostgreSQL 16→18 logical dump/restore rehearsal passed.
+Verified: PK/identity, sequence state, FK, unique/check constraints, index, JSONB and numeric precision.
 Source and target were disposable containers; no project volume was mounted.
 ```
 
@@ -86,7 +90,7 @@ Depois compare contagens e invariantes de negócio, execute `prisma migrate stat
 - Antes de aceitar escritas no PostgreSQL 18, o rollback pode voltar ao serviço 16 e ao volume antigo `pixsplit_pg`.
 - **Depois que o PostgreSQL 18 receber novas escritas, não volte simplesmente ao volume 16**: ele estará desatualizado. Será necessário congelar novamente as escritas, fazer dump lógico do 18, restaurar no 16 apenas se a compatibilidade e o teste reverso forem aprovados, ou seguir plano específico de reconciliação.
 - Nunca executar `docker compose down -v`, `docker volume rm pixsplit_pg` ou `pg_upgrade --link` como tentativa improvisada de rollback.
-- O ensaio automático é uma prova de dump/restore entre imagens limpas; ele não é backup do ambiente real, nem valida sozinho extensions, roles de produção, volume real ou downtime.
+- O ensaio automático é uma prova de dump/restore entre imagens limpas e cobre apenas o schema-fixture explícito do script (PK/identity/sequência, FK, UNIQUE/CHECK, índice, JSONB e precisão numérica). Ele não é backup do ambiente real e não valida sozinho todas as tabelas da aplicação, extensões, roles de produção, collations, volume real, volume de dados, duração de downtime ou procedimento final de cutover.
 
 ## Critério para fechar PR #30
 
