@@ -17,6 +17,7 @@ import { buildSessionCookieHeader, clearSessionCookieHeader, isValidCsrfRequest,
 import { getAdminMfaGuardError } from './security/admin-mfa-guard.js';
 import { isAuthSessionActive } from './security/session-store.js';
 import { applyAdminResponseCachePolicy } from './security/admin-response-cache.js';
+import { sanitizeAdminAuditMetadata } from './security/admin-audit-metadata.js';
 import { calculateUsdtSplit, mockBrlToUsdt } from './payments/split.js';
 import { verifyFoxbitWebhook, parseFoxbitWebhook, mapWebhookStatusToPaymentState } from './providers/foxbit/foxbit-webhook.js';
 import { verifyTransFiWebhookSignature, parseTransFiWebhook, mapTransFiStatusToPaymentState } from './providers/transfi/transfi-webhook.js';
@@ -1444,7 +1445,7 @@ app.get('/v1/admin/audit', { preHandler: [app.authenticate] }, async (request, r
     entityType: log.entityType,
     entityId: log.entityId,
     actorEmail: log.actor?.email ?? null,
-    metadata: log.metadata,
+    metadata: sanitizeAdminAuditMetadata(log.action, log.metadata),
     createdAt: log.createdAt,
   }));
 });
