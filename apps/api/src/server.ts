@@ -30,6 +30,7 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
 import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
 import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
+import { requeueFailedMerchantWebhookDelivery } from './webhooks/outbound-retry.js';
 import { createHttpMetrics } from './observability/http-metrics.js';
 import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
 
@@ -1083,6 +1084,94 @@ app.get('/v1/merchant/webhooks/:endpointId/deliveries', { preHandler: [app.authe
     },
   });
   return { deliveries };
+});
+
+// Re-enable a previously disabled endpoint so the merchant can retry its failed deliveries.
+app.post('/v1/merchant/webhooks/:endpointId/enable', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
+
+  const result = await prisma.$transaction(async tx => {
+    const endpoint = await tx.merchantWebhookEndpoint.findFirst({
+      where: { id: parsed.data.endpointId, merchantId: merchant.id },
+      select: { id: true, isEnabled: true },
+    });
+    if (!endpoint) return null;
+    if (!endpoint.isEnabled) {
+      const updated = await tx.merchantWebhookEndpoint.updateMany({
+        where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
+        data: { isEnabled: true },
+      });
+      if (updated.count !== 1) return null;
+      await tx.auditEvent.create({
+        data: {
+          actorUserId: request.user.sub,
+          action: 'MERCHANT_WEBHOOK_ENDPOINT_ENABLED',
+          entityType: 'MERCHANT_WEBHOOK_ENDPOINT',
+          entityId: endpoint.id,
+          ipAddress: request.ip,
+        },
+      });
+    }
+    return { id: endpoint.id, isEnabled: true };
+  });
+
+  if (!result) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+  return { success: true, endpoint: result };
+});
+
+// Requeue the existing outbox row: eventId and payload remain unchanged.
+app.post('/v1/merchant/webhooks/:endpointId/deliveries/:deliveryId/retry', {
+  preHandler: [app.authenticate],
+  config: { rateLimit: { max: 10, timeWindow: '5 minutes' } },
+}, async (request, reply) => {
+  const merchant = await merchantFor(request);
+  const parsed = z.object({
+    endpointId: z.string().min(1).max(64),
+    deliveryId: z.string().min(1).max(64),
+  }).strict().safeParse(request.params);
+  if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_delivery_id' });
+
+  const outcome = await prisma.$transaction(async tx => {
+    const result = await requeueFailedMerchantWebhookDelivery(tx, {
+      merchantId: merchant.id,
+      endpointId: parsed.data.endpointId,
+      deliveryId: parsed.data.deliveryId,
+    });
+    if (result.kind === 'requeued') {
+      await tx.auditEvent.create({
+        data: {
+          actorUserId: request.user.sub,
+          action: 'MERCHANT_WEBHOOK_DELIVERY_RETRIED',
+          entityType: 'MERCHANT_WEBHOOK_DELIVERY',
+          entityId: parsed.data.deliveryId,
+          ipAddress: request.ip,
+          metadata: { eventId: result.eventId } as Prisma.InputJsonObject,
+        },
+      });
+    }
+    return result;
+  });
+
+  if (outcome.kind === 'not_found') return reply.code(404).send({ error: 'webhook_delivery_not_found' });
+  if (outcome.kind === 'endpoint_disabled') return reply.code(409).send({ error: 'webhook_endpoint_disabled' });
+  if (outcome.kind === 'not_failed') {
+    return reply.code(409).send({ error: 'webhook_delivery_not_failed', status: outcome.currentStatus });
+  }
+  if (outcome.kind === 'conflict') return reply.code(409).send({ error: 'webhook_delivery_retry_conflict' });
+
+  return reply.code(202).send({
+    success: true,
+    deliveryId: parsed.data.deliveryId,
+    eventId: outcome.eventId,
+    status: 'PENDING',
+    nextAttemptAt: outcome.nextAttemptAt,
+    deliverySemantics: 'at-least-once',
+  });
 });
 
 // --- Merchant API Key Management (JWT Auth) ---
