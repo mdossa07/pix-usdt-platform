@@ -25,7 +25,7 @@ import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/idempotent-payment.js';
 import { createMerchantPaymentIdempotencyHooks } from './payments/merchant-payment-idempotency-hooks.js';
-import { listPendingMerchantPaymentReservations, recordMerchantPaymentReservationReview } from './payments/admin-idempotency-review.js';
+import { listPendingMerchantPaymentReservations, recordMerchantPaymentReservationReview, SENSITIVE_REVIEW_NOTE_ERROR } from './payments/admin-idempotency-review.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
@@ -1398,12 +1398,23 @@ app.post('/v1/admin/payment-reservations/:id/review', { preHandler: [app.authent
   const body = z.object({ note: z.string().trim().min(10).max(1000) }).strict().safeParse(request.body);
   if (!params.success || !body.success) return reply.code(400).send({ error: 'invalid_reservation_review' });
 
-  const recorded = await recordMerchantPaymentReservationReview(prisma, {
-    reservationId: params.data.id,
-    actorUserId: request.user.sub,
-    ipAddress: request.ip,
-    note: body.data.note,
-  });
+  let recorded: boolean;
+  try {
+    recorded = await recordMerchantPaymentReservationReview(prisma, {
+      reservationId: params.data.id,
+      actorUserId: request.user.sub,
+      ipAddress: request.ip,
+      note: body.data.note,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === SENSITIVE_REVIEW_NOTE_ERROR) {
+      return reply.code(400).send({
+        error: SENSITIVE_REVIEW_NOTE_ERROR,
+        message: 'A nota contém um identificador pessoal ou credencial. Remova CPF, CNPJ, e-mail, telefone, tokens e segredos antes de registrar a revisão.',
+      });
+    }
+    throw error;
+  }
   if (!recorded) {
     return reply.code(409).send({
       error: 'reservation_not_pending_or_too_recent',

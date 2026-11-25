@@ -190,7 +190,7 @@ export default function AdminDashboard() {
 
   const handleReviewPendingReservation = async (reservationId: string) => {
     const note = window.prompt(
-      'Registre o que foi conferido no portal do provedor. Não inclua CPF, senhas, tokens ou segredos. A reserva continuará bloqueada.',
+      'Registre o que foi conferido no portal do provedor. Não inclua CPF, CNPJ, e-mail, telefone, tokens ou segredos. A API recusa notas com dados pessoais/credenciais detectáveis. A reserva continuará bloqueada.',
     );
     if (!note?.trim()) return;
     if (note.trim().length < 10) {
