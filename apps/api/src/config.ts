@@ -19,6 +19,7 @@ const schema = z.object({
   PLATFORM_COMMISSION_BPS: z.coerce.number().int().min(200).max(200).default(200),
   MOCK_USDT_PER_BRL: z.string().regex(/^\d+(\.\d{1,6})?$/).default('0.180000'),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  METRICS_BEARER_TOKEN: z.string().refine(value => value === '' || /^[\\x21-\\x7E]{32,256}$/.test(value), 'METRICS_BEARER_TOKEN must be empty or 32-256 visible ASCII characters').default(''),
 
   // TransFi v3 (COBO/POBO)
   PAYMENT_PROVIDER: z.enum(['foxbit', 'transfi']).default('foxbit'),
