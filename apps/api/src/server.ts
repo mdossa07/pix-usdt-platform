@@ -30,6 +30,7 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
 import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
 import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
+import { createMerchantWebhookEndpointWithCapacity, enableMerchantWebhookEndpointWithCapacity } from './webhooks/outbound-endpoint-policy.js';
 import { requeueFailedMerchantWebhookDelivery } from './webhooks/outbound-retry.js';
 import { createHttpMetrics } from './observability/http-metrics.js';
 import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
@@ -967,24 +968,23 @@ app.post('/v1/merchant/webhooks', {
     });
   }
 
-  const activeCount = await prisma.merchantWebhookEndpoint.count({
-    where: { merchantId: merchant.id, isEnabled: true },
-  });
-  if (activeCount >= 10) return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
-
   const signingSecret = randomBytes(32).toString('base64url');
-  const endpoint = await prisma.merchantWebhookEndpoint.create({
-    data: {
-      merchantId: merchant.id,
-      url: target.url.toString(),
-      events: parsed.data.events,
-      signingSecretEncrypted: encryptPii(signingSecret),
-    },
-  });
-  await audit(request, 'MERCHANT_WEBHOOK_CREATED', 'MERCHANT_WEBHOOK_ENDPOINT', endpoint.id, {
-    host: target.url.hostname,
+  const creation = await createMerchantWebhookEndpointWithCapacity(prisma, {
+    merchantId: merchant.id,
+    url: target.url.toString(),
     events: parsed.data.events,
+    signingSecretEncrypted: encryptPii(signingSecret),
+    actorUserId: request.user.sub,
+    ipAddress: request.ip,
+    host: target.url.hostname,
   });
+  if (creation.kind === 'limit_reached') {
+    return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+  }
+  if (creation.kind === 'conflict') {
+    return reply.code(409).send({ error: 'webhook_endpoint_capacity_conflict' });
+  }
+  const endpoint = creation.endpoint;
   return reply.code(201).send({
     id: endpoint.id,
     url: endpoint.url,
@@ -1095,33 +1095,17 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
   const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
 
-  const result = await prisma.$transaction(async tx => {
-    const endpoint = await tx.merchantWebhookEndpoint.findFirst({
-      where: { id: parsed.data.endpointId, merchantId: merchant.id },
-      select: { id: true, isEnabled: true },
-    });
-    if (!endpoint) return null;
-    if (!endpoint.isEnabled) {
-      const updated = await tx.merchantWebhookEndpoint.updateMany({
-        where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
-        data: { isEnabled: true },
-      });
-      if (updated.count !== 1) return null;
-      await tx.auditEvent.create({
-        data: {
-          actorUserId: request.user.sub,
-          action: 'MERCHANT_WEBHOOK_ENDPOINT_ENABLED',
-          entityType: 'MERCHANT_WEBHOOK_ENDPOINT',
-          entityId: endpoint.id,
-          ipAddress: request.ip,
-        },
-      });
-    }
-    return { id: endpoint.id, isEnabled: true };
+  const result = await enableMerchantWebhookEndpointWithCapacity(prisma, {
+    merchantId: merchant.id,
+    endpointId: parsed.data.endpointId,
+    actorUserId: request.user.sub,
+    ipAddress: request.ip,
   });
 
-  if (!result) return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
-  return { success: true, endpoint: result };
+  if (result.kind === 'not_found') return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
+  if (result.kind === 'limit_reached') return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+  if (result.kind === 'conflict') return reply.code(409).send({ error: 'webhook_endpoint_enable_conflict' });
+  return { success: true, endpoint: result.endpoint };
 });
 
 // Requeue the existing outbox row: eventId and payload remain unchanged.

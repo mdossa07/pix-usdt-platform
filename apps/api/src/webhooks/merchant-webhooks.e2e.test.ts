@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMerchantWebhookDeliveries } from './outbound-outbox.js';
 import { requeueFailedMerchantWebhookDelivery } from './outbound-retry.js';
+import { createMerchantWebhookEndpointWithCapacity, enableMerchantWebhookEndpointWithCapacity } from './outbound-endpoint-policy.js';
 
 const databaseUrl = new URL(process.env.DATABASE_URL!);
 databaseUrl.searchParams.set('schema', 'merchant_webhooks_test');
@@ -114,6 +115,7 @@ describe('transactional merchant webhook outbox', () => {
       await prisma.walletDestination.deleteMany({ where: { merchantId } });
     }
     if (userId) {
+      await prisma.auditEvent.deleteMany({ where: { actorUserId: userId } });
       await prisma.merchant.deleteMany({ where: { userId } });
       await prisma.user.deleteMany({ where: { id: userId } });
     }
@@ -289,5 +291,82 @@ describe('transactional merchant webhook outbox', () => {
     );
     expect(otherMerchantOutcome).toEqual({ kind: 'not_found' });
   }, 20_000);
+
+  it('enforces the ten-active-endpoint cap for concurrent creation and reactivation', async () => {
+    // The fixture starts with two active endpoints. Add seven to reach nine,
+    // then race two creates for the single remaining slot.
+    await Promise.all(Array.from({ length: 7 }, (_, index) =>
+      prisma.merchantWebhookEndpoint.create({
+        data: {
+          merchantId,
+          url: `https://hooks.example.com/capacity-seed/${suffix}/${index}`,
+          events: ['payment.created'],
+          signingSecretEncrypted: `test-encrypted-capacity-seed-${index}`,
+        },
+      }),
+    ));
+
+    const secondDisabled = await prisma.merchantWebhookEndpoint.create({
+      data: {
+        merchantId,
+        url: `https://hooks.example.com/capacity-disabled/${suffix}`,
+        events: ['payment.created'],
+        signingSecretEncrypted: 'test-encrypted-capacity-disabled',
+        isEnabled: false,
+      },
+    });
+
+    const createOutcomes = await Promise.all([0, 1].map(index =>
+      createMerchantWebhookEndpointWithCapacity(prisma, {
+        merchantId,
+        url: `https://hooks.example.com/capacity-race/${suffix}/${index}`,
+        events: ['payment.created'],
+        signingSecretEncrypted: `test-encrypted-capacity-race-${index}`,
+        actorUserId: userId,
+        ipAddress: '127.0.0.1',
+        host: 'hooks.example.com',
+      }),
+    ));
+
+    expect(createOutcomes.filter(outcome => outcome.kind === 'created')).toHaveLength(1);
+    expect(createOutcomes.filter(outcome => outcome.kind === 'limit_reached' || outcome.kind === 'conflict')).toHaveLength(1);
+
+    const activeAfterConcurrentCreate = await prisma.merchantWebhookEndpoint.count({
+      where: { merchantId, isEnabled: true },
+    });
+    expect(activeAfterConcurrentCreate).toBe(10);
+
+    const blockedReactivation = await enableMerchantWebhookEndpointWithCapacity(prisma, {
+      merchantId,
+      endpointId: disabledEndpointId,
+      actorUserId: userId,
+      ipAddress: '127.0.0.1',
+    });
+    expect(blockedReactivation).toEqual({ kind: 'limit_reached' });
+
+    // Release exactly one slot, then race two disabled endpoints for it.
+    await prisma.merchantWebhookEndpoint.update({
+      where: { id: createdEndpointId },
+      data: { isEnabled: false },
+    });
+
+    const enableOutcomes = await Promise.all([disabledEndpointId, secondDisabled.id].map(endpointId =>
+      enableMerchantWebhookEndpointWithCapacity(prisma, {
+        merchantId,
+        endpointId,
+        actorUserId: userId,
+        ipAddress: '127.0.0.1',
+      }),
+    ));
+
+    expect(enableOutcomes.filter(outcome => outcome.kind === 'enabled')).toHaveLength(1);
+    expect(enableOutcomes.filter(outcome => outcome.kind === 'limit_reached' || outcome.kind === 'conflict')).toHaveLength(1);
+
+    const finalActiveCount = await prisma.merchantWebhookEndpoint.count({
+      where: { merchantId, isEnabled: true },
+    });
+    expect(finalActiveCount).toBe(10);
+  }, 30_000);
+
 
 });
