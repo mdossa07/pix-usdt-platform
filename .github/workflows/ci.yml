@@ -64,13 +64,21 @@ jobs:
           docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             -v "$PROMETHEUS_METRICS_TOKEN_FILE:/run/secrets/prometheus_metrics_token:ro" \
-            prom/prometheus:v3.5.0 \
+            prom/prometheus:v3.16.0 \
             check config /etc/prometheus/prometheus.yml
           docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
-            prom/prometheus:v3.5.0 \
+            prom/prometheus:v3.16.0 \
             check rules /etc/prometheus/alerts.yml
           node -e "JSON.parse(require('node:fs').readFileSync('infra/grafana/dashboards/pixsplit-api.json', 'utf8'))"
+      - name: Validate PostgreSQL 18 migration Compose overlay
+        env:
+          POSTGRES_USER: pixsplit_migration
+          POSTGRES_PASSWORD: pixsplit-ci-migration-only
+          POSTGRES_DB: pixsplit
+        run: docker compose -f docker-compose.yml -f docker-compose.postgres18-migration.yml --profile postgres18-migration config --quiet
+      - name: Rehearse PostgreSQL 16 to 18 logical migration
+        run: bash scripts/postgres-major-upgrade-smoke.sh
       - run: pnpm db:generate
       - run: pnpm lint
       - name: Check Chromium E2E script syntax
