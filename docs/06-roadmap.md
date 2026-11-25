@@ -1,43 +1,67 @@
-# 06 — Roadmap de entrega
+# 06 — Roadmap de entrega PixSplit
 
-## 0.2.0 — Fundação e protótipo conectado (implementado nesta etapa)
+Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o status detalhado e os bloqueios de produção.
+
+## 0.2.x — Fundação SaaS e protótipo verificável
 
 - [x] Monorepo pnpm com Next.js, Fastify, Prisma e PostgreSQL.
-- [x] Dashboard visual e áreas de operações, carteiras, API e relatórios.
-- [x] Cadastro/login JWT e hash Argon2id.
-- [x] Cadastro de carteiras USDT Polygon/Tron, criptografia AES-256-GCM dos campos sensíveis e dados de titular/Exchange.
-- [x] Criação de pagamentos mock, consulta de operações e endpoint de liquidação simulada.
-- [x] Cálculo 98%/2% usando `BigInt` em seis casas decimais.
-- [x] Schema para transfers, ledger, webhooks, idempotência e auditoria.
-- [x] Verificação HMAC de webhook Foxbit V2.
-- [x] Trava fail-closed: a API não inicializa com modo sandbox/live nem com NODE_ENV=production nesta versão.
-- [x] Documentação Foxbit atualizada com a distinção entre Fiat Gateway partner-level e funding de sub-member.
+- [x] Painéis iniciais de superadmin e comerciante, checkout público, operações, carteiras e relatórios.
+- [x] Cadastro/login com Argon2id, RBAC e escopo por comerciante.
+- [x] Criptografia AES-256-GCM para dados sensíveis e cadastro/revisão de carteiras USDT.
+- [x] Sessões HttpOnly, proteção CSRF, revogação de sessão e MFA TOTP obrigatório para superadmin.
+- [x] Chaves API merchant com HMAC, nonce e proteção anti-replay.
+- [x] Cobrança mock não pagável e liquidação simulada, split contábil 98%/2% e ledger com precisão inteira.
+- [x] Idempotência transacional de cobranças e tratamento conservador de payout ambíguo.
+- [x] Webhooks de entrada assinados e com claim/lease/fencing.
+- [x] Webhooks de saída via outbox transacional, assinatura HMAC, retries limitados e proteção SSRF.
+- [x] Bloqueio de IPv4/IPv6 privados e reservados, incluindo NAT64 well-known/local-use (PR #19).
+- [x] Cliente TransFi v3 tipado e testes de contrato; não habilitado como adaptador de pagamentos.
+- [x] Métricas Prometheus protegidas por Bearer.
+- [x] Overlay local Prometheus + Grafana, dashboard provisionado, alertas iniciais e smoke tests no CI (PR #20).
+- [x] CI com lint/typecheck, unitários, integrações PostgreSQL, migrações, build e E2E de autenticação em Chromium.
+- [x] Runbook operacional inicial.
 
-## Próxima etapa — Homologação Foxbit
+## Próxima etapa — Governança e preparação de homologação
 
-- [ ] Definir qual produto Foxbit habilita pagamento PIX de terceiros vinculado ao usuário final.
-- [ ] Receber aprovação comercial do modelo SaaS/white-label e do cálculo de comissão.
-- [ ] Habilitar partner API + sandbox, permissões, webhook e liquidez de teste.
-- [ ] Fechar KYC/KYB, cadastro de sub-members e Travel Rule de pagador/beneficiário.
-- [ ] Confirmar funding de BRL na subconta e compra USDT no contexto correto.
-- [ ] Confirmar transferências internas e saques HOSTED por merchant e da comissão da plataforma.
-- [ ] Implementar adapter Foxbit com schemas de request/response conferidos e testes de contrato.
-- [ ] Implementar filas, retentativas seguras, estados de cada perna e conciliação automática.
+- [ ] Tornar o repositório Private e revisar o histórico em busca de segredos/dados reais.
+- [ ] Ativar proteção de branch e exigir CI aprovado antes de merge.
+- [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace.
+- [ ] Confirmar por escrito o payin PIX de terceiros, funding/ownership de saldo, conversão BRL→USDT e os dois payouts independentes.
+- [ ] Receber sandbox, MIDs, permissões, webhooks e limites/tarifas documentados.
+- [ ] Fechar fluxo de KYC/KYB dinâmico, beneficiários, Travel Rule e redes aceitas.
+- [ ] Obter validação jurídica, regulatória, fiscal e de LGPD antes de operar valores reais.
 
-## Próxima etapa — Produto SaaS
+## Próxima etapa — Integração financeira homologada (somente após aprovação)
 
-- [ ] Painel superadministrador e equipe de Compliance.
-- [ ] Gestão de KYC, limites, bloqueios e revisão manual de carteiras.
-- [ ] Gestão de chaves de API por merchant, escopos e rotação.
-- [ ] Webhooks de saída para sistemas dos merchants.
-- [ ] Notificações, exportação CSV e relatórios financeiros.
-- [ ] Testes de integração e E2E; observabilidade e alertas.
+- [ ] Implementar adapter do provedor principal a partir de contratos e schemas oficiais confirmados.
+- [ ] Conectar onboarding de sender/recipient e descoberta de requisitos por país/tipo.
+- [ ] Conectar cobrança PIX e confirmação final do payin.
+- [ ] Conectar cotação/conversão e conciliação do valor líquido.
+- [ ] Implementar payout merchant 98% e payout da plataforma 2% como pernas independentes.
+- [ ] Implementar estados, retentativas seguras, timeouts, fila, idempotência e recuperação manual para cada perna.
+- [ ] Homologar devolução PIX, chargeback, reembolso, falha parcial, webhook perdido/duplicado e reconciliação.
+- [ ] Manter sandbox/live travado até aprovação independente de todos os cenários.
 
-## Antes de produção
+## Próxima etapa — Operação e produção
 
-- [ ] Revisão jurídica/contábil do CNPJ, objeto social e responsabilidade regulatória.
-- [ ] Contrato e aprovação formal do provedor.
-- [ ] Pentest, revisão de LGPD, plano de incidentes e proteção de segredos.
-- [ ] Teste de estorno/chargeback e operação parcial (uma perna conclui e outra falha).
-- [ ] Homologação de valores mínimos, fees, network e Travel Rule.
-- [ ] Aprovação explícita para desbloquear produção (remover a trava somente após checklist completo).
+- [ ] Provisionar serviços, banco, Redis, domínios, TLS e secret manager em ambiente controlado.
+- [ ] Migrar o overlay Prometheus/Grafana para ambiente real, com scrape de todas as réplicas.
+- [ ] Configurar Alertmanager/receiver e validar notificações.
+- [ ] Aplicar firewall/rede privada e controle de acesso operacional.
+- [ ] Formalizar responsáveis e simular break-glass 2-de-3.
+- [ ] Executar pentest externo, revisão de código e revisão de segurança independente.
+- [ ] Fazer teste de carga, backups, restauração e disaster recovery.
+- [ ] Fazer piloto controlado com limites aprovados e monitoramento.
+- [ ] Liberar produção apenas depois de confirmar os dois payouts, ledger balanceado e saldo reconciliado.
+
+## Critério de conclusão — 100%
+
+O projeto só será considerado 100% concluído quando:
+1. Aplicação e APIs estiverem implantadas, monitoradas e operacionais.
+2. Provedor tiver aprovado por escrito o modelo e o fluxo completo.
+3. Sandbox comprovar payin, conversão, dois payouts e todos os casos de falha/reconciliação.
+4. Compliance, KYC/KYB, Travel Rule, jurídico/regulatório/fiscal e LGPD estiverem validados.
+5. Pentest, backups, recuperação, incidentes e operação break-glass estiverem aprovados.
+6. Produção real tiver sido liberada explicitamente e passar pelos critérios de segurança e reconciliação.
+
+**Importante:** uma interface pronta ou CI verde não equivale à homologação financeira. Até o cumprimento dos gates acima, `PAYMENTS_MODE` permanece `mock`.
