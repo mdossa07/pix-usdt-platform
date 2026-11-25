@@ -15,10 +15,10 @@ export function sanitizeAdminAuditMetadata(
   if (action !== ADMIN_RESERVATION_REVIEW_AUDIT_ACTION) return metadata;
   if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
 
-  const safeMetadata: Record<string, Prisma.JsonValue> = { ...metadata };
+  const safeMetadata: Prisma.JsonObject = { ...metadata };
   if (Object.prototype.hasOwnProperty.call(safeMetadata, 'reviewNote')) {
     delete safeMetadata.reviewNote;
     safeMetadata.reviewNoteRedacted = true;
   }
-  return safeMetadata as Prisma.JsonObject;
+  return safeMetadata;
 }
