@@ -96,6 +96,9 @@ export async function reserveMerchantPaymentIdempotency(
           scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
           key: input.externalId,
           requestHash,
+          merchantId: input.merchantId,
+          amountBrlCents: BigInt(input.amountBrlCents),
+          walletDestinationId: input.walletDestinationId,
         },
       });
       return { kind: 'reserved', requestHash };

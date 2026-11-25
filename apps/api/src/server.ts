@@ -25,6 +25,7 @@ import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/idempotent-payment.js';
 import { createMerchantPaymentIdempotencyHooks } from './payments/merchant-payment-idempotency-hooks.js';
+import { listPendingMerchantPaymentReservations, recordMerchantPaymentReservationReview } from './payments/admin-idempotency-review.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
@@ -1371,6 +1372,49 @@ app.get('/v1/admin/payments', { preHandler: [app.authenticate] }, async (request
       txHash: transfer.txHash,
     })),
   }));
+});
+
+// --- Admin: unresolved merchant payment reservations ---
+app.get('/v1/admin/payment-reservations/pending', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const reservations = await listPendingMerchantPaymentReservations(prisma);
+  return reservations.map(reservation => ({
+    id: reservation.id,
+    externalId: reservation.externalId,
+    merchantId: reservation.merchantId,
+    merchantName: reservation.merchantName,
+    merchantEmail: reservation.merchantEmail,
+    amountBrlCents: reservation.amountBrlCents,
+    walletDestinationId: reservation.walletDestinationId,
+    createdAt: reservation.createdAt.toISOString(),
+    lastReviewedAt: reservation.lastReviewedAt?.toISOString() ?? null,
+    reviewNote: reservation.reviewNote,
+  }));
+});
+
+app.post('/v1/admin/payment-reservations/:id/review', { preHandler: [app.authenticate] }, async (request, reply) => {
+  if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
+  const params = z.object({ id: z.string().min(1).max(128) }).safeParse(request.params);
+  const body = z.object({ note: z.string().trim().min(10).max(1000) }).strict().safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: 'invalid_reservation_review' });
+
+  const recorded = await recordMerchantPaymentReservationReview(prisma, {
+    reservationId: params.data.id,
+    actorUserId: request.user.sub,
+    ipAddress: request.ip,
+    note: body.data.note,
+  });
+  if (!recorded) {
+    return reply.code(409).send({
+      error: 'reservation_not_pending_or_too_recent',
+      message: 'A reserva pode ter sido concluída, não existir ou ainda estar dentro da janela normal de processamento.',
+    });
+  }
+  return {
+    success: true,
+    reservationRemainsLocked: true,
+    message: 'Revisão registrada. A reserva continua bloqueada até reconciliação confiável com o provedor.',
+  };
 });
 
 // --- Admin: Audit Logs ---
