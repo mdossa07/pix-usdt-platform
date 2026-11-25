@@ -120,7 +120,7 @@ test('review cannot alter a completed, recent or non-existent reservation', asyn
 });
 
 test('review note must be meaningful and bounded', async () => {
-  const fake = fakeDatabase();
+  const fake = fakeDatabase({});
   await assert.rejects(
     recordMerchantPaymentReservationReview(fake.db, {
       reservationId: 'reservation-1',
