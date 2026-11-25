@@ -30,6 +30,8 @@ import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './
 import { MERCHANT_WEBHOOK_EVENTS, createMerchantWebhookDeliveries } from './webhooks/outbound-outbox.js';
 import { resolvePublicWebhookTarget } from './webhooks/outbound-security.js';
 import { startMerchantWebhookDispatcher } from './webhooks/outbound-dispatcher.js';
+import { createHttpMetrics } from './observability/http-metrics.js';
+import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -40,6 +42,24 @@ await app.register(cors, { origin: APP_ORIGIN, credentials: true, allowedHeaders
 await app.register(rateLimit, { max: 80, timeWindow: '1 minute' });
 await app.register(jwt, { secret: config.JWT_SECRET, sign: { expiresIn: '2h' } });
 await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
+
+// In-memory Prometheus metrics intentionally use bounded, static route labels only.
+const httpMetrics = createHttpMetrics();
+const requestStartedAt = new WeakMap<FastifyRequest, bigint>();
+app.addHook('onRequest', async request => {
+  requestStartedAt.set(request, process.hrtime.bigint());
+});
+app.addHook('onResponse', async (request, reply) => {
+  const startedAt = requestStartedAt.get(request);
+  if (startedAt === undefined) return;
+  const elapsedNs = process.hrtime.bigint() - startedAt;
+  httpMetrics.observe({
+    method: request.method,
+    route: request.routeOptions.url,
+    status: reply.statusCode,
+    durationSeconds: Number(elapsedNs) / 1_000_000_000,
+  });
+});
 
 const sessionCookieOptions = {
   secure: config.NODE_ENV === 'production',
@@ -175,6 +195,18 @@ function validateAddress(network: string, address: string) {
   if (network === 'tron') return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
   return false;
 }
+
+app.get('/metrics', { logLevel: 'silent' }, async (request, reply) => {
+  // No scrape token means the endpoint is not exposed at all.
+  if (!config.METRICS_BEARER_TOKEN) return reply.code(404).send();
+  if (!isValidMetricsBearerToken(request.headers.authorization, config.METRICS_BEARER_TOKEN)) {
+    return reply.code(401).header('Cache-Control', 'no-store').send({ error: 'unauthorized' });
+  }
+  return reply
+    .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+    .header('Cache-Control', 'no-store')
+    .send(httpMetrics.render());
+});
 
 app.get('/health', async () => ({ status: 'ok', mode: 'mock', foxbitIntegration: 'pending_partner_approval', livePayments: false }));
 app.get('/v1/admin/provider-status', { preHandler: [app.authenticate] }, async (request, reply) => {
