@@ -11,8 +11,25 @@ services:
       alertmanager:
         condition: service_started
 
+  webhook-url-preflight:
+    image: node:22-alpine
+    restart: "no"
+    command:
+      - node
+      - /opt/pixsplit/validate-alertmanager-webhook-url.mjs
+    volumes:
+      - ./scripts/validate-alertmanager-webhook-url.mjs:/opt/pixsplit/validate-alertmanager-webhook-url.mjs:ro
+    secrets:
+      - alertmanager_webhook_url
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+
   alertmanager:
     image: prom/alertmanager:v0.35.1
+    depends_on:
+      webhook-url-preflight:
+        condition: service_completed_successfully
     restart: unless-stopped
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
