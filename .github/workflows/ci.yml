@@ -51,16 +51,17 @@ jobs:
         run: |
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
           printf '%s' "$METRICS_BEARER_TOKEN" > "$PROMETHEUS_METRICS_TOKEN_FILE"
+          chmod 644 "$PROMETHEUS_METRICS_TOKEN_FILE"
           docker compose -f docker-compose.observability.yml config --quiet
-          docker run --rm \
+          docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             -v "$PROMETHEUS_METRICS_TOKEN_FILE:/run/secrets/prometheus_metrics_token:ro" \
             prom/prometheus:v3.5.0 \
-            promtool check config /etc/prometheus/prometheus.yml
-          docker run --rm \
+            check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             prom/prometheus:v3.5.0 \
-            promtool check rules /etc/prometheus/alerts.yml
+            check rules /etc/prometheus/alerts.yml
           node -e "JSON.parse(require('node:fs').readFileSync('infra/grafana/dashboards/pixsplit-api.json', 'utf8'))"
       - run: pnpm db:generate
       - run: pnpm lint
@@ -142,8 +143,22 @@ jobs:
             exit 1
           fi
 
-          dashboard="$(curl --silent --fail --user "admin:$GRAFANA_ADMIN_PASSWORD" 'http://127.0.0.1:3001/api/search?query=PixSplit' || true)"
-          node -e "const items=JSON.parse(process.argv[1]); process.exit(items.some(item => item.uid === 'pixsplit-api') ? 0 : 1)" "$dashboard"
+          dashboard_ready=false
+          for attempt in $(seq 1 30); do
+            dashboard="$(curl --silent --fail --user "admin:$GRAFANA_ADMIN_PASSWORD" 'http://127.0.0.1:3001/api/search?query=PixSplit' || true)"
+            if node -e "try { const items=JSON.parse(process.argv[1]); process.exit(items.some(item => item.uid === 'pixsplit-api') ? 0 : 1) } catch { process.exit(1) }" "$dashboard"; then
+              dashboard_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$dashboard_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml logs
+            exit 1
+          fi
+
+          rules="$(curl --silent --fail 'http://127.0.0.1:9090/api/v1/rules?type=alert')"
+          node -e "const data=JSON.parse(process.argv[1]); process.exit(data.data?.groups?.some(group => group.name === 'pixsplit-api') ? 0 : 1)" "$rules"
       - name: Stop observability stack
         if: always()
         run: docker compose -f docker-compose.observability.yml down
