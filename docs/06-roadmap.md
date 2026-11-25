@@ -76,7 +76,8 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 
 - [ ] Provisionar serviços, banco, Redis, domínios, TLS e secret manager em ambiente controlado.
 - [ ] Migrar o overlay Prometheus/Grafana para ambiente real, com scrape de todas as réplicas.
-- [ ] Configurar Alertmanager/receiver e validar notificações.
+- [x] Overlay opcional Alertmanager com receiver webhook via arquivo secreto, roteamento Prometheus e smoke tests `amtool`/readiness/registro no CI; o stack Prometheus/Grafana padrão continua independente.
+- [ ] Configurar a URL HTTPS real do receptor no secret manager e comprovar recebimento de notificação de teste; CI usa somente domínio `.invalid` e não comprova entrega externa.
 - [ ] Aplicar firewall/rede privada e controle de acesso operacional.
 - [ ] Formalizar responsáveis e simular break-glass 2-de-3.
 - [ ] Executar pentest externo, revisão de código e revisão de segurança independente.
