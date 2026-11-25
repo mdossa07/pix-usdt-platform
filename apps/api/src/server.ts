@@ -242,7 +242,7 @@ async function pingRedisForReadiness(): Promise<void> {
 app.get('/ready', async (_request, reply) => {
   const result = await checkApplicationReadiness({
     database: async () => {
-      await prisma.$queryRaw\`SELECT 1\`;
+      await prisma.$queryRaw`SELECT 1`;
     },
     redis: pingRedisForReadiness,
   });
