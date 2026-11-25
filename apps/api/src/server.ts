@@ -24,6 +24,7 @@ import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/idempotent-payment.js';
+import { reserveMerchantPaymentIdempotency, completeMerchantPaymentIdempotency } from './payments/merchant-payment-idempotency.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
