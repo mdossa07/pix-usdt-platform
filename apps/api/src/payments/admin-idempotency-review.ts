@@ -22,16 +22,16 @@ function isValidCpf(value: string): boolean {
 
 /** Detect common personal identifiers and credentials before a free-text audit note is persisted. */
 export function containsSensitiveMerchantPaymentReviewNote(note: string): boolean {
-  if (/\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b/i.test(note)) return true;
-  if (/\\b(?:CPF|CNPJ)\\s*[:=]/i.test(note)) return true;
-  if (/\\b\\d{2}\\.\\d{3}\\.\\d{3}\\/\\d{4}-\\d{2}\\b/.test(note)) return true;
-  if (/(?:\\+?55\\s*)?\\(\\d{2}\\)\\s*9?\\d{4}-\\d{4}/.test(note)) return true;
-  if (/\\b(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]{8,}/i.test(note)) return true;
-  if (/\\bpsk_[A-Za-z0-9_-]{16,}\\b/i.test(note)) return true;
-  if (/\\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|secret|senha|password)\\s*[:=]\\s*[^\\s,;]{8,}/i.test(note)) return true;
+  if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(note)) return true;
+  if (/\b(?:CPF|CNPJ)\s*[:=]/i.test(note)) return true;
+  if (/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/.test(note)) return true;
+  if (/(?:\+?55\s*)?\(\d{2}\)\s*9?\d{4}-\d{4}/.test(note)) return true;
+  if (/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/i.test(note)) return true;
+  if (/\bpsk_[A-Za-z0-9_-]{16,}\b/i.test(note)) return true;
+  if (/\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|secret|senha|password)\s*[:=]\s*[^\s,;]{8,}/i.test(note)) return true;
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i.test(note)) return true;
 
-  const cpfCandidates = note.match(/\\b\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}\\b/g) ?? [];
+  const cpfCandidates = note.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g) ?? [];
   return cpfCandidates.some(isValidCpf);
 }
 
