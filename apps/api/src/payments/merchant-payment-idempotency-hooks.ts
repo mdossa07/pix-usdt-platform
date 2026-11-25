@@ -25,8 +25,7 @@ function validBodyForFingerprint(body: MerchantPaymentBody): body is MerchantPay
   walletDestinationId: string;
   externalId: string;
 } {
-  return Object.keys(body).every(key => ['amountBrlCents', 'walletDestinationId', 'externalId', 'payerName', 'payerTaxId', 'description'].includes(key))
-    && typeof body.amountBrlCents === 'number'
+  return typeof body.amountBrlCents === 'number'
     && Number.isSafeInteger(body.amountBrlCents)
     && body.amountBrlCents >= 500
     && body.amountBrlCents <= 10_000_000
@@ -43,8 +42,13 @@ function validBodyForFingerprint(body: MerchantPaymentBody): body is MerchantPay
 export function createMerchantPaymentIdempotencyHooks(
   db: PrismaClient,
   piiEncryptionKeyHex: string,
+  enabled = true,
 ) {
   const preHandler = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (!enabled) {
+      reply.code(503).send({ error: 'financial_operations_disabled' });
+      return;
+    }
     const authenticated = request as MerchantAuthRequest;
     const merchant = authenticated.merchant;
     const body = request.body as MerchantPaymentBody | null;
@@ -128,9 +132,17 @@ export function createMerchantPaymentIdempotencyHooks(
       const response = {
         paymentId: existing.id,
         externalId: existing.externalId,
+        amountBrlCents: existing.amountBrlCents.toString(),
+        usdtAmount: null,
+        merchantNetUsdt: null,
+        commissionUsdt: null,
         status: existing.status,
         pixQrCodeBase64: existing.pixQrCodeBase64,
         pixCopyPaste: existing.pixCopyPaste,
+        expiresAt: existing.expiresAt?.toISOString() ?? null,
+        providerOrderId: existing.providerOrderId,
+        mode: 'mock',
+        warning: 'Cobrança criada em modo de demonstração. Não aceite nem envie este código PIX como pagamento real.',
       };
       await db.$transaction(tx => completeMerchantPaymentIdempotency(
         tx,

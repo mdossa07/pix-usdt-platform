@@ -1453,7 +1453,7 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
 });
 
 // --- Protected Merchant Endpoint: Create Payment (HMAC Auth) ---
-const merchantPaymentIdempotencyHooks = createMerchantPaymentIdempotencyHooks(prisma, config.PII_ENCRYPTION_KEY);
+const merchantPaymentIdempotencyHooks = createMerchantPaymentIdempotencyHooks(prisma, config.PII_ENCRYPTION_KEY, mockFinancialExecutionEnabled);
 
 const createPaymentSchema = z.object({
   amountBrlCents: z.number().int().min(500).max(10_000_000),
