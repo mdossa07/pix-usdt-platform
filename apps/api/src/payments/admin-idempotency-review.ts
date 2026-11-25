@@ -6,6 +6,36 @@ const MAX_PENDING_RESERVATIONS = 100;
 
 type ReviewDatabase = Pick<PrismaClient, 'idempotencyRecord' | 'merchant' | '$transaction'>;
 
+export const SENSITIVE_REVIEW_NOTE_ERROR = 'sensitive_review_note';
+
+function isValidCpf(value: string): boolean {
+  const digits = value.replace(/\\D/g, '');
+  if (digits.length !== 11 || /^([0-9])\\1{10}$/.test(digits)) return false;
+  const numbers = digits.split('').map(Number);
+  const firstSum = numbers.slice(0, 9).reduce((sum, digit, index) => sum + digit * (10 - index), 0);
+  const firstCheck = firstSum % 11 < 2 ? 0 : 11 - (firstSum % 11);
+  if (numbers[9] !== firstCheck) return false;
+  const secondSum = numbers.slice(0, 10).reduce((sum, digit, index) => sum + digit * (11 - index), 0);
+  const secondCheck = secondSum % 11 < 2 ? 0 : 11 - (secondSum % 11);
+  return numbers[10] === secondCheck;
+}
+
+/** Detect common personal identifiers and credentials before a free-text audit note is persisted. */
+export function containsSensitiveMerchantPaymentReviewNote(note: string): boolean {
+  if (/\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b/i.test(note)) return true;
+  if (/\\b(?:CPF|CNPJ)\\s*[:=]/i.test(note)) return true;
+  if (/\\b\\d{2}\\.\\d{3}\\.\\d{3}\\/\\d{4}-\\d{2}\\b/.test(note)) return true;
+  if (/(?:\\+?55\\s*)?\\(\\d{2}\\)\\s*9?\\d{4}-\\d{4}/.test(note)) return true;
+  if (/\\b(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]{8,}/i.test(note)) return true;
+  if (/\\bpsk_[A-Za-z0-9_-]{16,}\\b/i.test(note)) return true;
+  if (/\\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|secret|senha|password)\\s*[:=]\\s*[^\\s,;]{8,}/i.test(note)) return true;
+  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i.test(note)) return true;
+
+  const cpfCandidates = note.match(/\\b\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}\\b/g) ?? [];
+  return cpfCandidates.some(isValidCpf);
+}
+
+
 export interface PendingMerchantPaymentReservation {
   id: string;
   externalId: string;
@@ -98,6 +128,7 @@ export async function recordMerchantPaymentReservationReview(
 ): Promise<boolean> {
   const note = input.note.trim();
   if (note.length < 10 || note.length > 1000) throw new Error('invalid_review_note');
+  if (containsSensitiveMerchantPaymentReviewNote(note)) throw new Error(SENSITIVE_REVIEW_NOTE_ERROR);
 
   const staleBefore = new Date(now.getTime() - MERCHANT_PAYMENT_RESERVATION_REVIEW_DELAY_MS);
   return db.$transaction(async tx => {

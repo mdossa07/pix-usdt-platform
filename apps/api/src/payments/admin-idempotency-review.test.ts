@@ -5,6 +5,7 @@ import {
   listPendingMerchantPaymentReservations,
   recordMerchantPaymentReservationReview,
   MERCHANT_PAYMENT_RESERVATION_REVIEW_DELAY_MS,
+  containsSensitiveMerchantPaymentReviewNote,
 } from './admin-idempotency-review.js';
 import { MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE } from './merchant-payment-idempotency.js';
 
@@ -133,4 +134,39 @@ test('review note must be meaningful and bounded', async () => {
     /invalid_review_note/,
   );
   assert.equal(fake.calls.updateMany, undefined);
+});
+
+
+test('review note screening rejects common PII and credential formats', () => {
+  const unsafeNotes = [
+    'Provider portal shows CPF 529.982.247-25; still pending.',
+    'Contact the provider analyst at security@example.test.',
+    'Counterparty CNPJ: 12.345.678/0001-90 was checked.',
+    'Provider contact phone (11) 91234-5678 confirmed the case.',
+    'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456',
+    'API key: psk_0123456789abcdef0123456789abcdef',
+    '-----BEGIN RSA PRIVATE KEY-----',
+  ];
+  for (const note of unsafeNotes) {
+    assert.equal(containsSensitiveMerchantPaymentReviewNote(note), true, note);
+  }
+  assert.equal(
+    containsSensitiveMerchantPaymentReviewNote('Provider portal returned reference PX-2026-11-25-AB12; status remains pending.'),
+    false,
+  );
+});
+
+test('sensitive review notes are rejected before database mutation', async () => {
+  const fake = fakeDatabase({});
+  await assert.rejects(
+    recordMerchantPaymentReservationReview(fake.db, {
+      reservationId: 'reservation-1',
+      actorUserId: 'admin-1',
+      ipAddress: '127.0.0.1',
+      note: 'Provider portal shows CPF 529.982.247-25; still pending.',
+    }),
+    /sensitive_review_note/,
+  );
+  assert.equal(fake.calls.updateMany, undefined);
+  assert.equal(fake.calls.audit, undefined);
 });
