@@ -31,6 +31,8 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] GitHub Actions `checkout` e `setup-node` atualizadas para `v7`; `pnpm/action-setup` atualizado para `v6` (PRs #32, #33 e #38).
 - [x] Workflow Dependency Review preparado; sua ativação automática aguarda o proprietário habilitar Dependency Graph nas configurações do GitHub (PR #28).
 - [x] Reconciliação de payout `SUBMITTED` ambíguo após 30 minutos, consulta pela referência original, single-flight local, deduplicação e testes de fila (PR #43).
+- [x] Coordenação da reconciliação entre réplicas com advisory lock transacional PostgreSQL e lote máximo de 25 pagamentos (PR #47; CI e Security aprovados).
+- [x] Teste E2E em PostgreSQL real com dois clientes Prisma independentes para validar aquisição, contenção e liberação do advisory lock (PR #49; 45/45 etapas CI, CodeQL e Gitleaks aprovados).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
@@ -41,11 +43,13 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Preparação PostgreSQL 16→18: runbook de backup/restore/cutover/rollback, sidecar 18 em volume separado e ensaio lógico automatizado em CI com clusters descartáveis (PR #40).
 - [x] Ensaio PostgreSQL 16→18 ampliado: PK/identity, sequência, FK, UNIQUE/CHECK, índice, JSONB e numeric(28,8) verificados após dump PG16 e restore PG18 em recursos descartáveis (PR #45).
 - [ ] Planejar e aprovar o cutover dos dados reais para PostgreSQL 18: snapshot e backup verificados, compatibilidade de extensões/roles, restauração ensaiada com os dados do ambiente, janela de manutenção e rollback; só então atualizar o serviço principal (PR #30).
-- [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace.
+- [ ] Obter parecer jurídico/regulatório sobre enquadramento da PixSplit, split 98%/2%, movimentação de recursos de terceiros (Res. BCB 521, art. 76-A, § 3º) e contraparte autorizada (Res. BCB 520, art. 91).
+- [ ] Verificar no cadastro oficial do BCB o CNPJ e o escopo autorizado da entidade jurídica exata de cada provedor; protocolo de pedido de autorização não equivale a autorização concedida.
+- [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace, condicionada ao parecer regulatório.
 - [ ] Confirmar por escrito o payin PIX de terceiros, funding/ownership de saldo, conversão BRL→USDT e os dois payouts independentes.
 - [ ] Receber sandbox, MIDs, permissões, webhooks e limites/tarifas documentados.
 - [ ] Fechar fluxo de KYC/KYB dinâmico, beneficiários, Travel Rule e redes aceitas.
-- [ ] Obter validação jurídica, regulatória, fiscal e de LGPD antes de operar valores reais.
+- [ ] Obter validação jurídica, regulatória, fiscal e de LGPD antes de operar valores reais; registrar a conclusão e as restrições específicas no gate `docs/12-brazil-crypto-regulatory-gates.md`.
 
 ## Próxima etapa — Integração financeira homologada (somente após aprovação)
 
