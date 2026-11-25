@@ -7,7 +7,7 @@ dotenv.config({ path: resolve(process.cwd(), '../../.env') });
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  API_PORT: z.coerce.number().int().positive().default(4000),
+  API_PORT: z.coerce.number().int().positive().default(Number(process.env.PORT ?? 4000)),
   PAYMENTS_MODE: z.enum(['mock', 'sandbox', 'live']).default('mock'),
   APP_URL: z.string().url().default('http://localhost:3000'),
   DATABASE_URL: z.string().min(1),
