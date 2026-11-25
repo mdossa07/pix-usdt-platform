@@ -66,6 +66,13 @@ jobs:
           node --test scripts/validate-alertmanager-webhook-url.test.mjs
           node scripts/validate-alertmanager-webhook-url.mjs
           docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml config --quiet
+          printf '%s' 'http://alerts.pixsplit.invalid/webhook' > /tmp/pixsplit-alertmanager-webhook-url-invalid
+          chmod 644 /tmp/pixsplit-alertmanager-webhook-url-invalid
+          if ALERTMANAGER_WEBHOOK_URL_FILE=/tmp/pixsplit-alertmanager-webhook-url-invalid docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml run --rm webhook-url-preflight; then
+            echo "Alertmanager preflight accepted an HTTP webhook URL" >&2
+            exit 1
+          fi
+          docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml run --rm webhook-url-preflight
           docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             -v "$PROMETHEUS_METRICS_TOKEN_FILE:/run/secrets/prometheus_metrics_token:ro" \
