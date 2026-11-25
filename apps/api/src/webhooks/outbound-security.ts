@@ -77,7 +77,8 @@ function isPublicIpv6(address: string): boolean {
   if (matchesIpv6Prefix(value, 0x3fff0n, 20)) return false; // documentation
   if (matchesIpv6Prefix(value, 0x100080n, 23)) return false; // protocol assignments
   if (matchesIpv6Prefix(value, 0x2002n, 16)) return false; // 6to4
-  if (matchesIpv6Prefix(value, 0x64ff9bn, 48)) return false; // NAT64 well-known prefix
+  if (matchesIpv6Prefix(value, 0x64ff9b0000000000000000n, 96)) return false; // NAT64 well-known prefix
+  if (matchesIpv6Prefix(value, 0x64ff9b0001n, 48)) return false; // NAT64 local-use prefix
   if ((value >> 32n) === 0xffffn) return false; // IPv4-mapped IPv6
   return true;
 }
