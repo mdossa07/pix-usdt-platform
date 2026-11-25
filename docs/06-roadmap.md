@@ -23,12 +23,16 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Retry manual de entregas de webhook `FAILED`, com ownership, compare-and-set, rate limit, auditoria e preservação do evento/payload (PR #23).
 - [x] Gitleaks com varredura de histórico e CodeQL `security-extended` para JavaScript/TypeScript (PR #25).
 - [x] Segredos temporários e mascarados gerados a cada execução do CI, sem valores fixos no workflow (PR #25).
+- [x] Dependências JWT/Prisma corrigidas, lockfile congelado e `pnpm audit --audit-level moderate` obrigatório e aprovado (PR #28).
+- [x] Dependabot semanal para npm (monorepo), GitHub Actions e Docker Compose (PR #28).
+- [x] Workflow Dependency Review preparado; sua ativação automática aguarda o proprietário habilitar Dependency Graph nas configurações do GitHub (PR #28).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
 
 - [ ] Tornar o repositório Private e revisar o histórico em busca de segredos/dados reais.
 - [ ] Ativar proteção de branch e exigir CI aprovado antes de merge.
+- [ ] Habilitar Dependency Graph no GitHub e mudar `.github/workflows/dependency-review.yml` de `workflow_dispatch` para `pull_request`.
 - [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace.
 - [ ] Confirmar por escrito o payin PIX de terceiros, funding/ownership de saldo, conversão BRL→USDT e os dois payouts independentes.
 - [ ] Receber sandbox, MIDs, permissões, webhooks e limites/tarifas documentados.
