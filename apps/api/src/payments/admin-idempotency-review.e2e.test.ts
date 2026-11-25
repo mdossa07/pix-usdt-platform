@@ -113,13 +113,13 @@ describe('admin merchant payment reservation review queue', () => {
     expect(queue.map(item => item.id)).not.toContain(recent.id);
     expect(queue.map(item => item.id)).not.toContain(completed.id);
     const listed = queue.find(item => item.id === stale.id);
+    expect(listed).not.toHaveProperty('merchantEmail');
+    expect(listed).not.toHaveProperty('merchantId');
+    expect(listed).not.toHaveProperty('walletDestinationId');
     expect(listed).toMatchObject({
       externalId: `${keyPrefix}-stale`,
-      merchantId,
       merchantName: merchant.legalName,
-      merchantEmail: merchantUser.email,
       amountBrlCents: '12500',
-      walletDestinationId: 'wallet-review-test',
     });
 
     const reviewed = await recordMerchantPaymentReservationReview(prisma, {
