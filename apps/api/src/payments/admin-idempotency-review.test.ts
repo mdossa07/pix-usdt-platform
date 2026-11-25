@@ -56,7 +56,6 @@ test('pending reservation list is scoped, old-only, unresolved-only and enriched
     merchants: [{
       id: 'merchant-1',
       legalName: 'Merchant Example',
-      
     }],
   });
 
