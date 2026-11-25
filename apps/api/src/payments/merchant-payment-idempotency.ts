@@ -17,7 +17,7 @@ export type MerchantPaymentIdempotencyResult =
   | { kind: 'reserved'; requestHash: string }
   | { kind: 'replayed'; response: Prisma.JsonObject }
   | { kind: 'conflict' }
-  | { kind: 'in_progress' };
+  | { kind: 'in_progress'; requestHash: string };
 
 function canonicalize(input: MerchantPaymentRequestFingerprint): string {
   return JSON.stringify({
@@ -64,7 +64,7 @@ function resolveExisting(
 ): MerchantPaymentIdempotencyResult {
   if (record.requestHash !== requestHash) return { kind: 'conflict' };
   if (isJsonObject(record.responseJson)) return { kind: 'replayed', response: record.responseJson };
-  return { kind: 'in_progress' };
+  return { kind: 'in_progress', requestHash };
 }
 
 /**
