@@ -92,7 +92,7 @@ jobs:
           nohup pnpm --filter @pixsplit/web exec next dev -p 3000 >/tmp/pixsplit-web.log 2>&1 &
           api_ready=false
           for attempt in $(seq 1 90); do
-            if curl --silent --fail http://127.0.0.1:4000/health >/dev/null; then
+            if curl --silent --fail http://127.0.0.1:4000/health >/dev/null && curl --silent --fail http://127.0.0.1:4000/ready >/dev/null; then
               api_ready=true
               break
             fi

@@ -2,6 +2,14 @@
 
 > Estado: procedimento operacional proposto. Antes de produção, o titular deve designar responsáveis, aprovar contatos, horários de resposta, autoridade de comunicação e política de retenção de evidências.
 
+## Liveness e readiness da API
+
+- `GET /health` é o probe de liveness: confirma que o processo HTTP está vivo e não depende de PostgreSQL ou Redis.
+- `GET /ready` é o probe de readiness: executa `SELECT 1` no PostgreSQL e `PING` no Redis.
+- A resposta de `/ready` é HTTP 200 com `status: ready` somente quando os dois serviços respondem. Se algum estiver indisponível, retorna HTTP 503 e indicadores booleanos por dependência, sem expor mensagens de erro, URLs ou credenciais.
+- Configure o balanceador/orquestrador para usar `/health` como liveness e `/ready` como readiness. Não use `/health` como evidência de que banco e filas estão operacionais.
+- Ambas as respostas usam `Cache-Control: no-store`.
+
 ## 1. Regras que não podem ser ignoradas
 
 - O sistema deve permanecer em `PAYMENTS_MODE=mock` até que provedor, fluxo PIX, conversão, Travel Rule e os dois payouts independentes tenham sido homologados e liberados por escrito.

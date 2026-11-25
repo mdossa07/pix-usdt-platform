@@ -6,6 +6,7 @@ import jwt from '@fastify/jwt';
 import rawBody from 'fastify-raw-body';
 import rateLimit from '@fastify/rate-limit';
 import { PrismaClient, Prisma, WalletStatus, WalletType, PaymentStatus, TransferKind, TransferStatus, LedgerDirection, LedgerStatus, MerchantType } from '@prisma/client';
+import { Redis } from 'ioredis';
 import argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -38,6 +39,7 @@ import { createMerchantWebhookEndpointWithCapacity, enableMerchantWebhookEndpoin
 import { requeueFailedMerchantWebhookDelivery } from './webhooks/outbound-retry.js';
 import { createHttpMetrics } from './observability/http-metrics.js';
 import { isValidMetricsBearerToken } from './observability/metrics-auth.js';
+import { checkApplicationReadiness } from './health/readiness.js';
 
 const prisma = new PrismaClient();
 const app = Fastify({ logger: true, bodyLimit: 1_048_576 });
@@ -217,7 +219,38 @@ app.get('/metrics', { logLevel: 'silent' }, async (request, reply) => {
     .send(httpMetrics.render());
 });
 
-app.get('/health', async () => ({ status: 'ok', mode: 'mock', foxbitIntegration: 'pending_partner_approval', livePayments: false }));
+app.get('/health', async (_request, reply) => reply
+  .header('Cache-Control', 'no-store')
+  .send({ status: 'ok', mode: 'mock', foxbitIntegration: 'pending_partner_approval', livePayments: false }));
+
+async function pingRedisForReadiness(): Promise<void> {
+  const connection = new Redis(config.REDIS_URL, {
+    lazyConnect: true,
+    connectTimeout: 1_500,
+    maxRetriesPerRequest: 1,
+    retryStrategy: () => null,
+  });
+  try {
+    await connection.connect();
+    const response = await connection.ping();
+    if (response !== 'PONG') throw new Error('redis_readiness_check_failed');
+  } finally {
+    connection.disconnect();
+  }
+}
+
+app.get('/ready', async (_request, reply) => {
+  const result = await checkApplicationReadiness({
+    database: async () => {
+      await prisma.$queryRaw`SELECT 1`;
+    },
+    redis: pingRedisForReadiness,
+  });
+  return reply
+    .header('Cache-Control', 'no-store')
+    .code(result.ready ? 200 : 503)
+    .send({ status: result.ready ? 'ready' : 'not_ready', checks: result.checks });
+});
 app.get('/v1/admin/provider-status', { preHandler: [app.authenticate] }, async (request, reply) => {
   if (request.user.role !== 'SUPER_ADMIN') return reply.code(403).send({ error: 'forbidden' });
   return {
