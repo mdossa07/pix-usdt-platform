@@ -1,0 +1,39 @@
+services:
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus-alertmanager.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=5GB
+    volumes:
+      - ./infra/prometheus/prometheus-alertmanager.yml:/etc/prometheus/prometheus-alertmanager.yml:ro
+    depends_on:
+      alertmanager:
+        condition: service_started
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --data.retention=120h
+      - --web.listen-address=0.0.0.0:9093
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - pixsplit_alertmanager_data:/alertmanager
+    secrets:
+      - alertmanager_webhook_url
+    networks:
+      - pixsplit_observability
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pixsplit_alertmanager_data:
+
+secrets:
+  alertmanager_webhook_url:
+    file: ${ALERTMANAGER_WEBHOOK_URL_FILE:?Set ALERTMANAGER_WEBHOOK_URL_FILE to a file containing the HTTPS webhook URL}
