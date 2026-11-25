@@ -66,11 +66,17 @@ export function createHttpMetrics() {
     item.count += 1;
     item.durationSum += observation.durationSeconds;
     HISTOGRAM_BUCKETS.forEach((bound, index) => {
-      if (observation.durationSeconds <= bound) item!.bucketCounts[index] = (item!.bucketCounts[index] ?? 0) + 1;
+      if (observation.durationSeconds <= bound) {
+        const current = item.bucketCounts[index] ?? 0;
+        item.bucketCounts[index] = current + 1;
+      }
     });
   }
 
-  function render(nowSeconds = process.uptime(), memory = process.memoryUsage()): string {
+  function render(
+    nowSeconds = process.uptime(),
+    memory: Pick<NodeJS.MemoryUsage, 'rss' | 'heapUsed'> = process.memoryUsage(),
+  ): string {
     const lines: string[] = [
       '# HELP pixsplit_http_requests_total Total HTTP requests observed by the API process.',
       '# TYPE pixsplit_http_requests_total counter',
