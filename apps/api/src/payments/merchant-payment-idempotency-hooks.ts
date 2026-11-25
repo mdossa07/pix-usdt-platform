@@ -114,10 +114,7 @@ export function createMerchantPaymentIdempotencyHooks(
         await db.$transaction(tx => completeMerchantPaymentIdempotency(
           tx,
           normalized.externalId,
-          reservation.kind === 'reserved' ? reservation.requestHash : (
-            // The same request hash is recomputed by the reservation helper.
-            reserveHashForExisting
-          ),
+          reservation.requestHash,
           response as Prisma.InputJsonObject,
         ));
       }
