@@ -9,8 +9,8 @@ type ReviewDatabase = Pick<PrismaClient, 'idempotencyRecord' | 'merchant' | '$tr
 export const SENSITIVE_REVIEW_NOTE_ERROR = 'sensitive_review_note';
 
 function isValidCpf(value: string): boolean {
-  const digits = value.replace(/\\D/g, '');
-  if (digits.length !== 11 || /^([0-9])\\1{10}$/.test(digits)) return false;
+  const digits = value.replace(/\D/g, '');
+  if (digits.length !== 11 || /^([0-9])\1{10}$/.test(digits)) return false;
   const numbers = digits.split('').map(Number);
   const firstSum = numbers.slice(0, 9).reduce((sum, digit, index) => sum + digit * (10 - index), 0);
   const firstCheck = firstSum % 11 < 2 ? 0 : 11 - (firstSum % 11);
