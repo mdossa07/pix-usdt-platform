@@ -75,9 +75,9 @@ export function createMerchantPaymentIdempotencyHooks(
       }
       const sameRequest = existing.amountBrlCents === BigInt(normalized.amountBrlCents)
         && existing.walletDestinationId === normalized.walletDestinationId
-        && existing.payerName === (normalized.payerName ?? null)
-        && priorTaxId === normalized.payerTaxId
-        && existing.description === (normalized.description ?? null);
+        && (existing.payerName?.trim() ?? null) === (normalized.payerName?.trim() ?? null)
+        && priorTaxId?.trim() === normalized.payerTaxId?.trim()
+        && (existing.description?.trim() ?? null) === (normalized.description?.trim() ?? null);
       if (!sameRequest) {
         reply.code(409).send({ error: 'external_id_reused_with_different_request' });
         return;
