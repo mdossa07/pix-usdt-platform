@@ -24,6 +24,7 @@ import { enqueueSettlement, closeQueues } from './queues/producers.js';
 import { canRunMockFinancialExecution } from './payments/mode-guard.js';
 import { ReconciliationService } from './payments/reconciliation.js';
 import { createPaymentIdempotently, isValidIdempotencyKey } from './payments/idempotent-payment.js';
+import { createMerchantPaymentIdempotencyHooks } from './payments/merchant-payment-idempotency-hooks.js';
 import { hmacAuthMiddleware, generateMerchantApiKey } from './security/hmac-auth.js';
 import { createPaymentProvider } from './providers/provider-factory.js';
 import { claimWebhookEvent, completeWebhookEvent, releaseWebhookEvent } from './webhooks/event-claim.js';
@@ -1452,6 +1453,8 @@ app.post('/v1/admin/payments/:id/retry', { preHandler: [app.authenticate] }, asy
 });
 
 // --- Protected Merchant Endpoint: Create Payment (HMAC Auth) ---
+const merchantPaymentIdempotencyHooks = createMerchantPaymentIdempotencyHooks(prisma, config.PII_ENCRYPTION_KEY, mockFinancialExecutionEnabled);
+
 const createPaymentSchema = z.object({
   amountBrlCents: z.number().int().min(500).max(10_000_000),
   walletDestinationId: z.string().min(1),
@@ -1461,7 +1464,7 @@ const createPaymentSchema = z.object({
   description: z.string().max(500).optional(),
 });
 
-app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware], config: { rawBody: true } }, async (request, reply) => {
+app.post('/v1/merchant/payments', { preHandler: [hmacAuthMiddleware, merchantPaymentIdempotencyHooks.preHandler], onSend: merchantPaymentIdempotencyHooks.onSend, config: { rawBody: true } }, async (request, reply) => {
   if (!mockFinancialExecutionEnabled) return reply.code(503).send({ error: 'financial_operations_disabled' });
   const merchant = (request as any).merchant as { merchantId: string; keyId: string };
   const parsed = createPaymentSchema.safeParse(request.body);
