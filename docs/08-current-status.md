@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**76% concluído (entrega de software verificável).** A estimativa anterior era 75% em 25/11. Este avanço inclui a aplicação atômica do limite de dez webhooks ativos por comerciante, com proteção contra concorrência e teste PostgreSQL; upgrade de Argon2; atualização do Prometheus/Grafana e das Actions de CI; e os controles de supply-chain e auditoria de dependências já integrados (PRs #29, #31–#33, #36–#38). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
+**77% concluído (entrega de software verificável).** A estimativa anterior era 76% em 25/11. Este avanço inclui o ensaio automatizado e isolado de migração lógica PostgreSQL 16→18, com dump usando cliente 18, restauração em cluster 18, verificação de dados, volume novo e runbook de backup/cutover/rollback; também alinha o `promtool` à versão Prometheus 3.16 usada no stack (PR #40). Este índice mede implementação de software; não significa que o volume real foi migrado nem que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -76,6 +76,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #36 — Argon2 atualizado para `0.45.2`; integrado após testes e análise estática.
 - PR #37 — criação e reativação de webhooks com limite transacional `SERIALIZABLE`, audit log atômico e testes de concorrência; integrado em `1515002`.
 - PR #38 — `pnpm/action-setup` atualizado para `v6`; integrado em `cf3a616`.
+- PR #40 — runbook PostgreSQL 16→18, sidecar isolado com volume novo e ensaio lógico automatizado em CI; integrado em `5b6600b`.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
@@ -90,6 +91,9 @@ Evidências:
 - [CI PR #38 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634840203).
 - [CI PR #38 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634856768).
 - [Security PR #38 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634856709).
+- [CI PR #40 — push, sucesso com ensaio 16→18](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45636981635).
+- [CI PR #40 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45637080866).
+- [Security PR #40 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45637080961).
 
 O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
@@ -136,7 +140,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Tentativas repetidas em `PENDING`, `PROCESSING` ou `DELIVERED` são recusadas; consumidores continuam deduplicando pelo mesmo `X-PixSplit-Event-Id`.
 - Testes PostgreSQL cobrem preservação do evento/payload, reenvio duplicado, endpoint desativado e isolamento entre comerciantes.
 
-**Progresso global estimado: 76%.**
+**Progresso global estimado: 77%.**
 
 O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
 
@@ -178,7 +182,20 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - O teste de integração disputou a última vaga entre duas criações concorrentes e entre duas reativações concorrentes. Em ambos os cenários, exatamente uma operação foi aceita e a contagem final permaneceu em dez. A tentativa de reativar com capacidade cheia foi recusada.
 - PR #29 atualizou Prometheus para `v3.16.0`; PR #31 atualizou Grafana para `13.3.1`; os smoke tests validaram scrape, provisioning e dashboard.
 - PR #32 e #33 atualizaram `actions/checkout` e `actions/setup-node` para `v7`; PR #38 atualizou `pnpm/action-setup` para `v6`. CI e Security passaram após essas atualizações.
-- PR #30 (PostgreSQL 16→18) permanece aberto e não foi integrado: é uma atualização major de banco e precisa de um plano explícito de backup/migração dos volumes persistentes antes de trocar a imagem local.
+- PR #30 (PostgreSQL 16→18) permanece aberto e não foi integrada ao serviço principal. PR #40 adicionou e validou um ensaio lógico de dump/restore com clusters descartáveis e um sidecar 18 em volume separado. O volume real `pixsplit_pg` continua em PG16 e não foi tocado; o cutover só deve ocorrer após backup/snapshot verificado, rehearsal dos dados reais, plano de rollback e aprovação do operador.
 - PR #35 (Dependency Review v5) permanece aberto; a ação está em `workflow_dispatch` até o proprietário habilitar Dependency Graph.
 
 **Progresso global estimado: 76%.** A plataforma continua em modo mock. A aprovação do provedor, credenciais sandbox/live, compliance e ambiente de produção permanecem pendentes.
+
+
+## Entrega validada — preparação segura PostgreSQL 16→18 — 25/11/2026
+
+- PR #40 integrada em `master` no commit `5b6600b`.
+- `scripts/postgres-major-upgrade-smoke.sh` cria clusters descartáveis PostgreSQL 16/18, gera dump custom-format com cliente 18 lendo o servidor 16, restaura no servidor 18 e verifica conteúdo de texto e JSONB.
+- O ensaio usa rede e volume temporários próprios, removidos pelo script; nunca monta nem modifica `pixsplit_pg` ou `pixsplit_redis`.
+- `docker-compose.postgres18-migration.yml` define sidecar opcional em `localhost:5434` com volume separado e mount correto `/var/lib/postgresql`.
+- `docs/11-postgres-major-upgrade-runbook.md` documenta backup, restore, validações, cutover e rollback; o volume PG16 permanece preservado.
+- O CI passou a validar o overlay Compose, executar o ensaio 16→18 e usar `promtool v3.16.0`, alinhado à imagem Prometheus do stack.
+- CI de push, CI de PR e Gitleaks/CodeQL da PR #40 passaram.
+
+**Progresso global estimado: 77%.** O software agora possui um rehearsal repetível de migração major; a base real do usuário ainda não foi migrada, e o serviço principal permanece PostgreSQL 16.
