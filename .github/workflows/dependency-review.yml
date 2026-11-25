@@ -1,0 +1,25 @@
+name: Dependency Review
+
+# The repository Dependency Graph must be enabled in Settings > Security & analysis
+# before this action can run. Until then, pnpm audit runs in the required CI workflow.
+# After the owner enables Dependency Graph, add pull_request: { branches: [master] }.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Review dependency changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Reject high/critical vulnerable dependency additions
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development

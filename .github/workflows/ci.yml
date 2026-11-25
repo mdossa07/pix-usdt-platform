@@ -41,7 +41,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - name: Install dependencies from the committed lockfile
+        run: pnpm install --frozen-lockfile
       - run: cp .env.example .env
       - name: Generate ephemeral CI secrets
         shell: bash
@@ -52,6 +53,8 @@ jobs:
             echo "::add-mask::$value"
             printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
           done
+      - name: Audit dependency vulnerabilities
+        run: pnpm audit --audit-level moderate
       - name: Validate Prometheus configuration and alert rules
         run: |
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
@@ -166,7 +169,14 @@ jobs:
           node -e "const data=JSON.parse(process.argv[1]); process.exit(data.data?.groups?.some(group => group.name === 'pixsplit-api') ? 0 : 1)" "$rules"
       - name: Stop observability stack
         if: always()
-        run: docker compose -f docker-compose.observability.yml down
+        env:
+          # Compose validates interpolation even when tearing down containers.
+          # This fallback is used only during cleanup if secret generation did not run.
+          GRAFANA_ADMIN_PASSWORD: cleanup-only-not-used
+        run: |
+          mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
+          touch "$PROMETHEUS_METRICS_TOKEN_FILE"
+          docker compose -f docker-compose.observability.yml down
       - name: Run Chromium browser authentication E2E
         run: |
           mkdir -p /tmp/pixsplit-playwright

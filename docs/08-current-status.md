@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**74% concluído (entrega de software verificável).** A estimativa anterior era 73% em 25/11. O avanço reflete também a automação de varredura de segredos no histórico (Gitleaks), análise estática CodeQL para JavaScript/TypeScript e geração de credenciais temporárias mascaradas em cada execução do CI (PR #25). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
+**75% concluído (entrega de software verificável).** A estimativa anterior era 74% em 25/11. O avanço desta etapa inclui atualização das dependências vulneráveis (JWT/Prisma transitivos), lockfile reproduzível, auditoria obrigatória `pnpm audit --audit-level moderate`, atualização semanal por Dependabot para npm, GitHub Actions e Docker Compose, além de CI com secrets efêmeros e validação Gitleaks/CodeQL (PRs #25 e #28). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -20,6 +20,9 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - TOTP RFC 6238, códigos de recuperação armazenados como hashes e MFA obrigatório para superadministradores.
 - Workflow de segurança integrado: Gitleaks analisa o histórico Git completo; CodeQL executa análise `security-extended` em JavaScript/TypeScript.
 - O CI gera JWT secret, chave PII, token Prometheus e senha Grafana aleatórios por execução e mascara os valores nos logs; não mantém esses segredos fixos no YAML.
+- Instalação CI exige `pnpm install --frozen-lockfile`; o gate `pnpm audit --audit-level moderate` bloqueia vulnerabilidades moderadas, altas e críticas.
+- PR #28 atualiza `@fastify/jwt` para 10.2.9 e fixa `fast-jwt` 6.3.7, `deepmerge-ts` 8.0.0 e `effect` 3.22.1; lockfile gerado pelo pnpm e instalação congelada validada.
+- Dependabot semanal acompanha manifests npm nas três áreas do monorepo, GitHub Actions e imagens Docker Compose. A ação Dependency Review está preparada em execução manual; a ativação automática em PR depende do Dependency Graph ser habilitado nas configurações do repositório.
 - Sessões persistidas em PostgreSQL, revogação centralizada, logout e encerramento individual/global de sessões.
 - O layout administrativo valida identidade em `/v1/me` via cookie HttpOnly, exige `SUPER_ADMIN` e encerra a sessão pelo endpoint de logout; PR #22 cobre login sem bearer token, acesso ao painel e revogação em Chromium.
 - Middleware revalida usuário ativo e papel atual no PostgreSQL em rotas autenticadas.
@@ -119,7 +122,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Tentativas repetidas em `PENDING`, `PROCESSING` ou `DELIVERED` são recusadas; consumidores continuam deduplicando pelo mesmo `X-PixSplit-Event-Id`.
 - Testes PostgreSQL cobrem preservação do evento/payload, reenvio duplicado, endpoint desativado e isolamento entre comerciantes.
 
-**Progresso global estimado: 74%.**
+**Progresso global estimado: 75%.**
 
 O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
 
@@ -140,3 +143,15 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - CodeQL executou análise `security-extended` para JavaScript/TypeScript; workflow terminou com sucesso.
 - CI deixou de usar credenciais de teste fixas no YAML: gera valores criptograficamente aleatórios para JWT, chave de criptografia PII, token Prometheus e senha Grafana em cada execução, com mascaramento no log.
 - Isso automatiza detecção e reduz exposição de valores estáticos no CI, mas não substitui tornar o repositório privado, proteger `master`, revisar alertas e manter segredos reais em secret manager.
+
+
+## Entrega validada — dependências e supply-chain — 25/11/2026
+
+- PR #28 integra atualização dos componentes JWT e overrides transitivos de Prisma, com lockfile atualizado pelo pnpm.
+- A instalação congelada `pnpm install --frozen-lockfile` e a auditoria `pnpm audit --audit-level moderate` passaram.
+- CI passou em push e pull request; testes unitários, integração PostgreSQL, migrações, E2E Chromium, build e smoke de Prometheus/Grafana também passaram.
+- Gitleaks e CodeQL passaram na PR.
+- Dependabot está configurado para npm, GitHub Actions e Docker Compose. O Dependency Review foi deixado em `workflow_dispatch` enquanto o Dependency Graph estiver desativado; o CI mantém `pnpm audit` como gate ativo.
+- O workflow temporário de geração de lockfile foi removido depois da geração e validação para não deixar automação de escrita limitada a uma branch de trabalho.
+
+**Progresso global estimado: 75%.** A plataforma permanece `mock` e não pode movimentar dinheiro real.
