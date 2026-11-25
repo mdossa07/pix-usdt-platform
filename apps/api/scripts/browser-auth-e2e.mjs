@@ -18,7 +18,7 @@ const browser = await chromium.launch({
   args: ['--no-sandbox', '--disable-dev-shm-usage'],
 });
 
-async function cleanupTestMerchant(): Promise<void> {
+async function cleanupTestMerchant() {
   const user = await prisma.user.findUnique({
     where: { email },
     select: { id: true, merchant: { select: { id: true } } },
@@ -62,7 +62,7 @@ try {
     return { status: response.status, payload: await response.json() };
   }, API_ORIGIN);
   assert.equal(sessions.status, 200);
-  assert.ok(sessions.payload.sessions.some((session: { current: boolean }) => session.current));
+  assert.ok(sessions.payload.sessions.some(session => session.current));
 
   const cookies = await context.cookies(API_ORIGIN);
   const sessionCookie = cookies.find(cookie => cookie.name === 'pixsplit_session');
