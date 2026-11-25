@@ -1,6 +1,4 @@
 import { PrismaClient, PaymentStatus, TransferStatus } from '@prisma/client';
-import { enqueueSettlement } from '../queues/producers.js';
-
 type SettlementEnqueuer = (paymentId: string, brlCents: bigint) => Promise<void>;
 type ReconciliationPrisma = Pick<PrismaClient, 'payment'>;
 
@@ -14,7 +12,12 @@ export class ReconciliationService {
 
   constructor(
     private readonly prisma: ReconciliationPrisma,
-    private readonly enqueue: SettlementEnqueuer = enqueueSettlement,
+    private readonly enqueue: SettlementEnqueuer = async (paymentId, brlCents) => {
+      // Load BullMQ only when the production queue is actually used. Unit tests can
+      // inject an in-memory enqueuer without opening Redis connections on import.
+      const { enqueueSettlement } = await import('../queues/producers.js');
+      await enqueueSettlement(paymentId, brlCents);
+    },
   ) {}
 
   /**
