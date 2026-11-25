@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { Readable } from 'node:stream';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
   completeMerchantPaymentIdempotency,
@@ -139,10 +140,10 @@ export function createMerchantPaymentIdempotencyHooks(
   const onSend = async (
     request: FastifyRequest,
     reply: FastifyReply,
-    payload: string | Buffer,
-  ): Promise<string | Buffer> => {
+    payload: string | Buffer | Readable,
+  ): Promise<string | Buffer | Readable> => {
     const reservation = (request as MerchantAuthRequest).merchantPaymentReservation;
-    if (!reservation || reply.statusCode !== 201) return payload;
+    if (!reservation || reply.statusCode !== 201 || (typeof payload !== 'string' && !Buffer.isBuffer(payload))) return payload;
 
     try {
       const response = JSON.parse(Buffer.isBuffer(payload) ? payload.toString('utf8') : payload) as Prisma.InputJsonObject;
