@@ -15,7 +15,11 @@
     "db:migrate": "pnpm --filter @pixsplit/api db:migrate",
     "db:migrate:dev": "pnpm --filter @pixsplit/api db:migrate:dev",
     "db:studio": "pnpm --filter @pixsplit/api db:studio",
-    "audit:dependencies": "pnpm audit --audit-level moderate"
+    "audit:dependencies": "pnpm audit --audit-level moderate",
+    "start:api": "pnpm --filter @pixsplit/api start",
+    "start:web": "pnpm --filter @pixsplit/web start",
+    "db:generate:deploy": "pnpm --filter @pixsplit/api db:generate:deploy",
+    "db:migrate:deploy": "pnpm --filter @pixsplit/api db:migrate:deploy"
   },
   "pnpm": {
     "overrides": {

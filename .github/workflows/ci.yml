@@ -298,6 +298,8 @@ jobs:
           DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
       - name: Run admin TOTP recovery integration scenarios
         run: DATABASE_URL="${DATABASE_URL%schema=public}schema=admin_totp_test" pnpm --filter @pixsplit/api exec vitest run src/security/two-factor-recovery.e2e.test.ts
+      - name: Validate Railway production command contract
+        run: node --test scripts/railway-deploy-contract.test.mjs
       - name: Build production artifacts
         run: pnpm build
         env:

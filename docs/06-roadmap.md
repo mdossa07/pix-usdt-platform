@@ -74,6 +74,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 
 ## Próxima etapa — Operação e produção
 
+- [x] Preparar comandos Railway para monorepo compartilhado: API/Web com start commands explícitos, migrations Prisma sem `.env` local, API respeita `PORT` da plataforma e CI valida o contrato de deploy (PR #68, após merge e CI aprovados).
 - [ ] Provisionar serviços, banco, Redis, domínios, TLS e secret manager em ambiente controlado.
 - [ ] Migrar o overlay Prometheus/Grafana para ambiente real, com scrape de todas as réplicas.
 - [x] Overlay opcional Alertmanager com receiver webhook via arquivo secreto, roteamento Prometheus, preflight HTTPS obrigatório no startup sem rede e teste CI de recusa HTTP/aceitação HTTPS; o stack Prometheus/Grafana padrão continua independente (PR #66 integrada em `78beacee`; PR #67 integrada em `16dcb470`; CI push e pull request 47/47, Gitleaks e CodeQL aprovados nas duas PRs).
