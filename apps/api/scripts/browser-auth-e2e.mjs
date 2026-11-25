@@ -29,6 +29,7 @@ async function cleanupTestUsers() {
     });
     if (!user) continue;
     if (user.merchant) await prisma.merchant.deleteMany({ where: { id: user.merchant.id } });
+    await prisma.auditEvent.deleteMany({ where: { actorUserId: user.id } });
     await prisma.user.deleteMany({ where: { id: user.id } });
   }
 }
