@@ -95,6 +95,12 @@ export function createMerchantPaymentIdempotencyHooks(
       return;
     }
     if (reservation.kind === 'replayed') {
+      if (existing) {
+        // Let the route handler repeat its merchant/wallet checks before returning
+        // an existing payment. The stored response is already complete.
+        reply.header('Idempotency-Replayed', 'true');
+        return;
+      }
       reply.header('Idempotency-Replayed', 'true');
       reply.code(200).send(reservation.response);
       return;
@@ -110,15 +116,14 @@ export function createMerchantPaymentIdempotencyHooks(
         pixQrCodeBase64: existing.pixQrCodeBase64,
         pixCopyPaste: existing.pixCopyPaste,
       };
-      if (reservation.kind === 'reserved' || reservation.kind === 'in_progress') {
-        await db.$transaction(tx => completeMerchantPaymentIdempotency(
-          tx,
-          normalized.externalId,
-          reservation.requestHash,
-          response as Prisma.InputJsonObject,
-        ));
-      }
-      reply.code(200).send(response);
+      await db.$transaction(tx => completeMerchantPaymentIdempotency(
+        tx,
+        normalized.externalId,
+        reservation.requestHash,
+        response as Prisma.InputJsonObject,
+      ));
+      // Continue into the route handler so current merchant and wallet
+      // authorization is checked before an existing payment is returned.
       return;
     }
 
