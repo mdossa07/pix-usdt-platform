@@ -129,6 +129,6 @@ test('a failed enqueue releases the single-flight guard for the next reconciliat
 
 test('rejects unsafe reconciliation page sizes', () => {
   const prisma = fakeDatabase(async () => []);
-  assert.throws(() => new ReconciliationService(prisma, undefined, undefined, 0), /batch_size/);
-  assert.throws(() => new ReconciliationService(prisma, undefined, undefined, 1_001), /batch_size/);
+  assert.throws(() => new ReconciliationService(prisma, async () => {}, undefined, 0), /batch_size/);
+  assert.throws(() => new ReconciliationService(prisma, async () => {}, undefined, 1_001), /batch_size/);
 });
