@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**70% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
+**71% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
 
 ## Entregue e integrado no master
 
@@ -21,6 +21,7 @@
 - Sessões de navegador persistidas em `AuthSession` no PostgreSQL, com JTI único, expiração, metadados limitados e revogação centralizada; JWTs sem sessão ativa são rejeitados em cada requisição autenticada.
 - Logout revoga a sessão atual antes de limpar o cookie; o usuário pode listar até 25 sessões ativas, revogar uma sessão específica e encerrar todas as sessões. As operações são registradas na auditoria.
 - O JWT tem validade de duas horas e a sessão no banco compartilha o mesmo prazo. JWTs anteriores à migração não possuem JTI persistido e deixam de ser aceitos após o rollout; exigir novo login.
+- O layout do comerciante autentica usando a sessão HttpOnly em `/v1/me`; o marcador `pixsplit_authenticated` não é credencial e nenhum JWT novo é persistido em `localStorage`. JWT legado só é usado durante a transição.
 
 ### Webhooks de saída para comerciantes
 - Até 10 endpoints HTTPS ativos por comerciante, com seleção de eventos, desativação, rotação de segredo e consulta de entregas.
@@ -68,8 +69,11 @@
 - PR #14 — MFA obrigatório em rotas de superadmin; merge commit `5191d19`.
 - PR #15 — revogação centralizada de sessões de navegador; merge commit `e064947`; CI pós-merge aprovado.
 - PR #16 — webhooks de saída seguros para comerciantes; merge commit `13889a7`; CI pós-merge #373 aprovado.
+- PR #17 — métricas Prometheus protegidas por Bearer; merge commit `a0197b1`; CI pós-merge #392 aprovado.
+- PR #18 — E2E real em Chromium e correção do guard legado do painel comerciante; merge commit `161aef8`; CI pós-merge #412 aprovado.
 
 CI completo do PR #17 aprovado (lint, unitários, integrações PostgreSQL, migrações e build): https://github.com/mdossa07/pix-usdt-platform/actions/runs/45515013582
+CI pós-merge do PR #18 aprovado, incluindo Chromium e integrações PostgreSQL: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45518472158
 
 O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em schema vazio, cenários financeiros PostgreSQL, concorrência de idempotência, HMAC, webhooks, TOTP e build.
 
@@ -83,7 +87,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - Foxbit Partner depende de permissões comerciais específicas. Fiat Gateway no nível do parceiro e funding de sub-member são fluxos distintos; a arquitetura de saldo e os dois withdrawals precisam de aprovação escrita.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
 - O processo multi-pessoa de break-glass está descrito como proposta, mas depende de aprovação formal, designação dos três responsáveis e simulado antes de produção.
-- Faltam teste E2E de navegador, provisionamento do Prometheus e scrape por réplica, dashboards/regras de alertas, runbooks específicos de cada provedor/produção, pentest externo e revisão jurídica/regulatória/fiscal.
+- Faltam provisionamento do Prometheus e scrape por réplica, dashboards/regras de alertas, runbooks específicos de cada provedor/produção, pentest externo e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
 
 ## Próximas etapas
@@ -94,7 +98,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 4. Conectar o cliente v3 ou o fluxo Foxbit Partner homologado ao motor de pagamentos; manter feature flags desabilitadas até sandbox aprovado.
 5. Construir onboarding e checkout dinâmicos para os campos requeridos pelo provedor.
 6. Homologar payin, conversão, merchant payout 98%, platform payout 2%, webhooks, retries, timeouts, falhas parciais, refunds e reconciliação.
-7. Concluir E2E de navegador, provisionar Prometheus por réplica, dashboards/alertas, runbooks específicos, processo multi-pessoa de break-glass, pentest externo e revisão jurídica/regulatória/fiscal.
+7. Provisionar Prometheus por réplica, dashboards/alertas, runbooks específicos, formalizar e simular o processo multi-pessoa de break-glass, executar pentest externo e revisão jurídica/regulatória/fiscal.
 8. Liberar produção somente após confirmação independente dos dois payouts, ledger balanceado e reconciliação do saldo do provedor.
 
 ## Política operacional
