@@ -131,7 +131,7 @@ O stack padrão Prometheus/Grafana permanece independente. Para ativar entrega d
 ```bash
 mkdir -p .secrets
 read -r -s -p "HTTPS Alertmanager webhook URL: " ALERTMANAGER_WEBHOOK_URL
-printf '\\n'
+printf '\n'
 printf '%s' "$ALERTMANAGER_WEBHOOK_URL" > .secrets/alertmanager_webhook_url
 unset ALERTMANAGER_WEBHOOK_URL
 chmod 600 .secrets/alertmanager_webhook_url
@@ -141,10 +141,10 @@ export ALERTMANAGER_WEBHOOK_URL_FILE="$PWD/.secrets/alertmanager_webhook_url"
 2. Valide a configuração e suba o stack com o overlay:
 
 ```bash
-docker run --rm --entrypoint=amtool \\
-  -v "$PWD/infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \\
-  -v "$ALERTMANAGER_WEBHOOK_URL_FILE:/run/secrets/alertmanager_webhook_url:ro" \\
-  prom/alertmanager:v0.35.1 \\
+docker run --rm --entrypoint=amtool \
+  -v "$PWD/infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+  -v "$ALERTMANAGER_WEBHOOK_URL_FILE:/run/secrets/alertmanager_webhook_url:ro" \
+  prom/alertmanager:v0.35.1 \
   check-config /etc/alertmanager/alertmanager.yml
 
 docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml config --quiet
@@ -156,7 +156,6 @@ docker compose -f docker-compose.observability.yml -f docker-compose.alertmanage
 O receiver lê a URL pelo campo `url_file`; a URL/token não deve ser inserida no YAML, no `.env`, em logs, tickets ou commits. Mantenha a validação TLS padrão e não publique a porta 9093 na Internet. O receiver envia alertas resolvidos, agrupa por nome/serviço/severidade e limita cada notificação a 20 alertas.
 
 O CI usa somente `https://alerts.pixsplit.invalid/webhook` para validar o parser, a inicialização do Alertmanager e o registro no Prometheus. Esse domínio reservado não recebe notificações; **a entrega real só estará homologada depois que o responsável configurar a URL HTTPS do receptor e confirmar uma notificação de teste recebida**. O endpoint de destino deve tolerar entregas repetidas e usar o fingerprint/labels para deduplicar notificações.
-
 ## 9. Deploy e rollback
 
 1. Confirmar aprovação de release, revisão de código, CI verde e hash do commit.
