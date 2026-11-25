@@ -51,6 +51,23 @@ export function createMerchantPaymentIdempotencyHooks(
     const body = request.body as MerchantPaymentBody | null;
     if (!merchant || !body || !validBodyForFingerprint(body)) return;
 
+    const merchantRecord = await db.merchant.findUnique({ where: { id: merchant.merchantId } });
+    if (!merchantRecord?.isEnabled || merchantRecord.kycStatus !== 'APPROVED') {
+      reply.code(403).send({ error: 'merchant_not_approved' });
+      return;
+    }
+    const wallet = await db.walletDestination.findFirst({
+      where: { id: body.walletDestinationId, merchantId: merchant.merchantId },
+    });
+    if (!wallet) {
+      reply.code(400).send({ error: 'invalid_wallet' });
+      return;
+    }
+    if (wallet.status !== 'VERIFIED' || !wallet.isVerified) {
+      reply.code(409).send({ error: 'wallet_not_verified' });
+      return;
+    }
+
     const normalized = {
       merchantId: merchant.merchantId,
       externalId: body.externalId,
@@ -97,10 +114,8 @@ export function createMerchantPaymentIdempotencyHooks(
       return;
     }
     if (reservation.kind === 'replayed') {
-      if (existing) {
-        // Let the route handler repeat its merchant/wallet checks before returning
-        // an existing payment. The stored response is already complete.
-        reply.header('Idempotency-Replayed', 'true');
+      if (!existing) {
+        reply.code(409).send({ error: 'payment_record_missing_requires_reconciliation' });
         return;
       }
       reply.header('Idempotency-Replayed', 'true');
@@ -124,8 +139,8 @@ export function createMerchantPaymentIdempotencyHooks(
         reservation.requestHash,
         response as Prisma.InputJsonObject,
       ));
-      // Continue into the route handler so current merchant and wallet
-      // authorization is checked before an existing payment is returned.
+      reply.header('Idempotency-Replayed', 'true');
+      reply.code(200).send(response);
       return;
     }
 
