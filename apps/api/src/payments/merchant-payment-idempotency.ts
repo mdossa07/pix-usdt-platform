@@ -120,7 +120,7 @@ export async function completeMerchantPaymentIdempotency(
   externalId: string,
   requestHash: string,
   response: Prisma.InputJsonObject,
-): Promise<void> {
+): Promise<boolean> {
   const result = await tx.idempotencyRecord.updateMany({
     where: {
       scope: MERCHANT_PAYMENT_IDEMPOTENCY_SCOPE,
@@ -130,5 +130,5 @@ export async function completeMerchantPaymentIdempotency(
     },
     data: { responseJson: response },
   });
-  if (result.count !== 1) throw new Error('merchant_payment_idempotency_reservation_lost');
+  return result.count === 1;
 }
