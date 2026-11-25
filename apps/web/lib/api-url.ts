@@ -25,5 +25,5 @@ export function resolveBrowserApiBaseUrl(
     throw new Error('PRODUCTION_NEXT_PUBLIC_API_URL_MUST_USE_HTTPS');
   }
 
-  return value.replace(/\\/+$/, '');
+  return value.replace(/\/+$/, '');
 }
