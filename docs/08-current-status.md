@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**90% concluído (entrega de software verificável).** A estimativa anterior era 89% em 25/11. A PR #63 reforçou a configuração de produção: `APP_URL` (origem pública do painel) e `NEXT_PUBLIC_API_URL` (API acessada pelo navegador) precisam usar HTTPS; backend e frontend rejeitam configurações HTTP/inválidas antes da operação. O CI usa um endereço HTTPS reservado apenas durante o build de produção, sem relaxar a validação de runtime. A PR #63 foi integrada em `80276dbc`; CI de push e pull request passaram em 47/47 etapas, com Gitleaks e CodeQL aprovados. A PR #64 também protege os metadados livres de cadastro de carteira na trilha administrativa; PR #62 cobre `no-store` em toda a API versionada. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
+**91% concluído (entrega de software verificável).** A estimativa anterior era 90% em 25/11. A PR #65 adicionou readiness operacional: `/health` permanece liveness independente; `/ready` exige consulta real ao PostgreSQL (`SELECT 1`) e resposta Redis (`PING`), retorna 503 se uma dependência falhar e não expõe mensagens ou segredos. O CI agora exige readiness antes dos E2E. PR #65 integrada em `ec1e1476`; CI push e pull request passaram em 47/47 etapas, com Gitleaks e CodeQL aprovados. A PR #63 continua exigindo HTTPS nas origens públicas de produção; PR #64 protege metadados de auditoria e PR #62 aplica `no-store` à API versionada. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -10,6 +10,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 
 ### Plataforma e contas
 - Origens públicas seguras em produção: `APP_URL` e `NEXT_PUBLIC_API_URL` exigem HTTPS, sem credenciais, query string ou fragmento; backend falha no startup e frontend falha no build/runtime quando a configuração não atende ao contrato. HTTP permanece permitido em desenvolvimento/teste. O CI injeta `https://api.pixsplit.invalid` somente na etapa de build de produção; deploys reais precisam fornecer a origem HTTPS efetiva (PR #63, integrada em `80276dbc`; CI push e pull request 47/47, Gitleaks e CodeQL aprovados).
+- Readiness operacional: `GET /health` verifica liveness sem depender das integrações; `GET /ready` executa `SELECT 1` no PostgreSQL e `PING` no Redis, responde 200 somente quando ambos estão disponíveis e 503 com indicadores booleanos sanitizados em caso contrário. O CI exige `/ready` antes dos E2E; PR #65 integrada em `ec1e1476` (CI push e pull request 47/47, Gitleaks e CodeQL aprovados).
 - Monorepo pnpm com Next.js, React, Fastify, TypeScript, Prisma e PostgreSQL.
 - Painéis iniciais de superadmin e comerciante, checkout público, operações, carteiras e relatórios.
 - Cadastro/login com Argon2id, JWT, RBAC e escopo por comerciante.
