@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**75% concluído (entrega de software verificável).** A estimativa anterior era 74% em 25/11. O avanço desta etapa inclui atualização das dependências vulneráveis (JWT/Prisma transitivos), lockfile reproduzível, auditoria obrigatória `pnpm audit --audit-level moderate`, atualização semanal por Dependabot para npm, GitHub Actions e Docker Compose, além de CI com secrets efêmeros e validação Gitleaks/CodeQL (PRs #25 e #28). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
+**76% concluído (entrega de software verificável).** A estimativa anterior era 75% em 25/11. Este avanço inclui a aplicação atômica do limite de dez webhooks ativos por comerciante, com proteção contra concorrência e teste PostgreSQL; upgrade de Argon2; atualização do Prometheus/Grafana e das Actions de CI; e os controles de supply-chain e auditoria de dependências já integrados (PRs #29, #31–#33, #36–#38). Este índice mede implementação de software; não mede homologação financeira ou autorização para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -68,6 +68,14 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #21 — status/roadmap atualizado após os marcos de observabilidade e SSRF; integrado em `b9e91c8`.
 - PR #22 — guard administrativo HttpOnly, roteamento por papel e E2E Chromium de superadmin; integrado em `f6238f2`.
 - PR #23 — reativação de endpoint e retry manual seguro de webhooks `FAILED`, preservando evento/payload; integrado em `f865f64`.
+- PR #28 — atualização das dependências JWT/Prisma, auditoria moderada e Dependabot; integrado em `3a6594d`.
+- PR #29 — Prometheus atualizado para `v3.16.0`; integrado após CI de scrape/alertas.
+- PR #31 — Grafana atualizado para `13.3.1`; integrado após teste de provisioning/dashboard.
+- PR #32 — `actions/checkout` atualizado para `v7`; integrado após CI e Security.
+- PR #33 — `actions/setup-node` atualizado para `v7`; integrado após CI e Security.
+- PR #36 — Argon2 atualizado para `0.45.2`; integrado após testes e análise estática.
+- PR #37 — criação e reativação de webhooks com limite transacional `SERIALIZABLE`, audit log atômico e testes de concorrência; integrado em `1515002`.
+- PR #38 — `pnpm/action-setup` atualizado para `v6`; integrado em `cf3a616`.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
@@ -76,6 +84,12 @@ Evidências:
 - [CI do PR #22 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625231839).
 - [CI do PR #22 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625264032).
 - [CI pós-merge do PR #23 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625664517).
+- [CI PR #37 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45633985690).
+- [CI PR #37 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634056875).
+- [Security PR #37 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634056837).
+- [CI PR #38 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634840203).
+- [CI PR #38 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634856768).
+- [Security PR #38 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45634856709).
 
 O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
@@ -122,7 +136,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Tentativas repetidas em `PENDING`, `PROCESSING` ou `DELIVERED` são recusadas; consumidores continuam deduplicando pelo mesmo `X-PixSplit-Event-Id`.
 - Testes PostgreSQL cobrem preservação do evento/payload, reenvio duplicado, endpoint desativado e isolamento entre comerciantes.
 
-**Progresso global estimado: 75%.**
+**Progresso global estimado: 76%.**
 
 O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
 
@@ -133,7 +147,7 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - PR #23: comerciante pode reativar o próprio endpoint e reenfileirar apenas entregas `FAILED`; mantém o mesmo `eventId` e payload, valida ownership, usa compare-and-set, limita tentativas e grava auditoria.
 - Ambos os recursos estão integrados em `master`; CI de PR #22 e pós-merge de PR #23 aprovados.
 
-**Progresso global estimado: 74%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
+**Progresso global estimado: 76%.** O sistema permanece em modo mock; nenhum PIX real, conversão ou payout on-chain foi habilitado.
 
 
 ## Entrega validada — segurança automatizada do repositório — 25/11/2026
@@ -155,3 +169,16 @@ O produto permanece em modo mock. O retry de webhook não habilita pagamentos re
 - O workflow temporário de geração de lockfile foi removido depois da geração e validação para não deixar automação de escrita limitada a uma branch de trabalho.
 
 **Progresso global estimado: 75%.** A plataforma permanece `mock` e não pode movimentar dinheiro real.
+
+
+## Entrega validada — limite transacional e cadeia de ferramentas — 25/11/2026
+
+- PR #36 atualizou Argon2 para `0.45.2`; CI e Security passaram.
+- PR #37 centralizou a regra de no máximo dez webhooks ativos por comerciante. Criação e reativação verificam capacidade e gravam auditoria na mesma transação PostgreSQL `SERIALIZABLE`; conflitos de serialização viram HTTP 409.
+- O teste de integração disputou a última vaga entre duas criações concorrentes e entre duas reativações concorrentes. Em ambos os cenários, exatamente uma operação foi aceita e a contagem final permaneceu em dez. A tentativa de reativar com capacidade cheia foi recusada.
+- PR #29 atualizou Prometheus para `v3.16.0`; PR #31 atualizou Grafana para `13.3.1`; os smoke tests validaram scrape, provisioning e dashboard.
+- PR #32 e #33 atualizaram `actions/checkout` e `actions/setup-node` para `v7`; PR #38 atualizou `pnpm/action-setup` para `v6`. CI e Security passaram após essas atualizações.
+- PR #30 (PostgreSQL 16→18) permanece aberto e não foi integrado: é uma atualização major de banco e precisa de um plano explícito de backup/migração dos volumes persistentes antes de trocar a imagem local.
+- PR #35 (Dependency Review v5) permanece aberto; a ação está em `workflow_dispatch` até o proprietário habilitar Dependency Graph.
+
+**Progresso global estimado: 76%.** A plataforma continua em modo mock. A aprovação do provedor, credenciais sandbox/live, compliance e ambiente de produção permanecem pendentes.
