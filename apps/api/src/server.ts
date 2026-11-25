@@ -968,24 +968,47 @@ app.post('/v1/merchant/webhooks', {
     });
   }
 
-  const endpointCapacity = await prisma.$transaction(tx =>
-    hasMerchantWebhookEndpointCapacity(tx, merchant.id),
-  );
-  if (!endpointCapacity) return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
-
   const signingSecret = randomBytes(32).toString('base64url');
-  const endpoint = await prisma.merchantWebhookEndpoint.create({
-    data: {
-      merchantId: merchant.id,
-      url: target.url.toString(),
-      events: parsed.data.events,
-      signingSecretEncrypted: encryptPii(signingSecret),
-    },
-  });
-  await audit(request, 'MERCHANT_WEBHOOK_CREATED', 'MERCHANT_WEBHOOK_ENDPOINT', endpoint.id, {
-    host: target.url.hostname,
-    events: parsed.data.events,
-  });
+  let creation: { kind: 'limit_reached' } | { kind: 'created'; endpoint: Awaited<ReturnType<typeof prisma.merchantWebhookEndpoint.create>> };
+  try {
+    creation = await prisma.$transaction(async tx => {
+      const hasCapacity = await hasMerchantWebhookEndpointCapacity(tx, merchant.id);
+      if (!hasCapacity) return { kind: 'limit_reached' as const };
+
+      const endpoint = await tx.merchantWebhookEndpoint.create({
+        data: {
+          merchantId: merchant.id,
+          url: target.url.toString(),
+          events: parsed.data.events,
+          signingSecretEncrypted: encryptPii(signingSecret),
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorUserId: request.user.sub,
+          action: 'MERCHANT_WEBHOOK_CREATED',
+          entityType: 'MERCHANT_WEBHOOK_ENDPOINT',
+          entityId: endpoint.id,
+          ipAddress: request.ip,
+          metadata: {
+            host: target.url.hostname,
+            events: parsed.data.events,
+          } as Prisma.InputJsonObject,
+        },
+      });
+      return { kind: 'created' as const, endpoint };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2034') {
+      return reply.code(409).send({ error: 'webhook_endpoint_capacity_conflict' });
+    }
+    throw error;
+  }
+
+  if (creation.kind === 'limit_reached') {
+    return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
+  }
+  const endpoint = creation.endpoint;
   return reply.code(201).send({
     id: endpoint.id,
     url: endpoint.url,
@@ -1096,33 +1119,41 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
   const parsed = z.object({ endpointId: z.string().min(1).max(64) }).strict().safeParse(request.params);
   if (!parsed.success) return reply.code(400).send({ error: 'invalid_webhook_endpoint_id' });
 
-  const result = await prisma.$transaction(async tx => {
-    const endpoint = await tx.merchantWebhookEndpoint.findFirst({
-      where: { id: parsed.data.endpointId, merchantId: merchant.id },
-      select: { id: true, isEnabled: true },
-    });
-    if (!endpoint) return { kind: 'not_found' as const };
-    if (!endpoint.isEnabled) {
-      const hasCapacity = await hasMerchantWebhookEndpointCapacity(tx, merchant.id);
-      if (!hasCapacity) return { kind: 'limit_reached' as const };
+  let result: { kind: 'not_found' } | { kind: 'limit_reached' } | { kind: 'conflict' } | { kind: 'enabled'; endpoint: { id: string; isEnabled: true } };
+  try {
+    result = await prisma.$transaction(async tx => {
+      const endpoint = await tx.merchantWebhookEndpoint.findFirst({
+        where: { id: parsed.data.endpointId, merchantId: merchant.id },
+        select: { id: true, isEnabled: true },
+      });
+      if (!endpoint) return { kind: 'not_found' as const };
+      if (!endpoint.isEnabled) {
+        const hasCapacity = await hasMerchantWebhookEndpointCapacity(tx, merchant.id);
+        if (!hasCapacity) return { kind: 'limit_reached' as const };
 
-      const updated = await tx.merchantWebhookEndpoint.updateMany({
-        where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
-        data: { isEnabled: true },
-      });
-      if (updated.count !== 1) return { kind: 'conflict' as const };
-      await tx.auditEvent.create({
-        data: {
-          actorUserId: request.user.sub,
-          action: 'MERCHANT_WEBHOOK_ENDPOINT_ENABLED',
-          entityType: 'MERCHANT_WEBHOOK_ENDPOINT',
-          entityId: endpoint.id,
-          ipAddress: request.ip,
-        },
-      });
+        const updated = await tx.merchantWebhookEndpoint.updateMany({
+          where: { id: endpoint.id, merchantId: merchant.id, isEnabled: false },
+          data: { isEnabled: true },
+        });
+        if (updated.count !== 1) return { kind: 'conflict' as const };
+        await tx.auditEvent.create({
+          data: {
+            actorUserId: request.user.sub,
+            action: 'MERCHANT_WEBHOOK_ENDPOINT_ENABLED',
+            entityType: 'MERCHANT_WEBHOOK_ENDPOINT',
+            entityId: endpoint.id,
+            ipAddress: request.ip,
+          },
+        });
+      }
+      return { kind: 'enabled' as const, endpoint: { id: endpoint.id, isEnabled: true as const } };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (typeof error === 'object' && error && 'code' in error && error.code === 'P2034') {
+      return reply.code(409).send({ error: 'webhook_endpoint_enable_conflict' });
     }
-    return { kind: 'enabled' as const, endpoint: { id: endpoint.id, isEnabled: true } };
-  });
+    throw error;
+  }
 
   if (result.kind === 'not_found') return reply.code(404).send({ error: 'webhook_endpoint_not_found' });
   if (result.kind === 'limit_reached') return reply.code(409).send({ error: 'webhook_endpoint_limit_reached' });
@@ -1130,7 +1161,6 @@ app.post('/v1/merchant/webhooks/:endpointId/enable', {
   return { success: true, endpoint: result.endpoint };
 });
 
-// Requeue the existing outbox row: eventId and payload remain unchanged.
 app.post('/v1/merchant/webhooks/:endpointId/deliveries/:deliveryId/retry', {
   preHandler: [app.authenticate],
   config: { rateLimit: { max: 10, timeWindow: '5 minutes' } },
