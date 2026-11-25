@@ -9,6 +9,7 @@
 - Assinaturas de webhook são verificadas sobre o raw body, antes do parse JSON.
 - Rate limit, IP allowlist quando exigida, TLS, rotação de chaves, TOTP para superadministradores e trilha de auditoria.
 - Todas as respostas sob `/v1/` recebem `Cache-Control: no-store` e `Pragma: no-cache` por hook global, cobrindo rotas autenticadas de administração, sessão, perfil e comerciante e também endpoints públicos da API. `/health`, `/metrics` e arquivos estáticos ficam fora da regra.
+- A API de auditoria omite campos livres de eventos históricos de revisão de reserva (`reviewNote`) e cadastro de carteira (`exchangeName`), preservando os eventos e os metadados operacionais não textuais. Novos eventos de cadastro de carteira não persistem esse campo livre no metadata de auditoria.
 - Alertas para destinatários novos, variações de rede, valores fora do perfil, repetição de cobranças e saques.
 - Bloquear pagamentos quando KYC, conta do provedor, rede, beneficiário ou Travel Rule estiverem pendentes/rejeitados.
 - Definir tratamento de chargeback, fraude, devolução PIX e ativos já enviados; não prometer reversão on-chain.
