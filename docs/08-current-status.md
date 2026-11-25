@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**69% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
+**70% concluído.** O percentual representa a entrega de software verificável. Não significa que o produto possa movimentar dinheiro real; a etapa financeira de produção continua bloqueada por homologação e credenciais externas.
 
 ## Entregue e integrado no master
 
@@ -31,6 +31,13 @@
 - Retentativas limitadas, timeout e resposta limitados; sem promessa de exactly-once. Consumidores devem deduplicar pelo ID do evento.
 - Testes PostgreSQL cobrem subscriptions, payload sem PII e rollback transacional; CI de PR #16 e CI pós-merge passaram.
 - Runbook operacional inicial em `docs/10-operations-runbook.md`: triagem, reconciliação, incidentes de webhook/conta, deploy/rollback e proposta de break-glass 2-de-3. O procedimento emergencial ainda precisa de aprovação formal, responsáveis nomeados e simulado.
+
+### Observabilidade da API
+- Endpoint Prometheus `GET /metrics` implementado e integrado: contador HTTP, histograma de latência, uptime e memória residente/heap do processo.
+- Scrape protegido por `METRICS_BEARER_TOKEN` (32–256 caracteres ASCII visíveis); sem segredo o endpoint retorna 404, e credencial incorreta recebe 401.
+- Labels usam somente método, template estático de rota e status HTTP; caminhos desconhecidos viram `unmatched`, sem IDs, query strings, CPF ou e-mail.
+- Sem dependência adicional: métricas ficam em memória por processo. CI do PR #17 passou em lint, suíte unitária, integrações PostgreSQL, migrações e build; merge commit `a0197b1`.
+- A API exporta métricas, mas Prometheus, scrape por réplica, firewall de rede, dashboards e regras de alerta ainda dependem de provisionamento no ambiente.
 
 ### Pagamentos e segurança financeira
 - Criação de pagamentos em modo de demonstração, com código explícito `MOCK-PIX-NOT-PAYABLE`.
@@ -62,7 +69,7 @@
 - PR #15 — revogação centralizada de sessões de navegador; merge commit `e064947`; CI pós-merge aprovado.
 - PR #16 — webhooks de saída seguros para comerciantes; merge commit `13889a7`; CI pós-merge #373 aprovado.
 
-CI completo aprovado no head do PR #12: https://github.com/mdossa07/pix-usdt-platform/actions/runs/45492613470
+CI completo do PR #17 aprovado (lint, unitários, integrações PostgreSQL, migrações e build): https://github.com/mdossa07/pix-usdt-platform/actions/runs/45515013582
 
 O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em schema vazio, cenários financeiros PostgreSQL, concorrência de idempotência, HMAC, webhooks, TOTP e build.
 
@@ -76,7 +83,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 - Foxbit Partner depende de permissões comerciais específicas. Fiat Gateway no nível do parceiro e funding de sub-member são fluxos distintos; a arquitetura de saldo e os dois withdrawals precisam de aprovação escrita.
 - O cadastro atual de comerciante/carteira não completa todo o KYC/KYB dinâmico exigido pelos corredores e provedores.
 - O processo multi-pessoa de break-glass está descrito como proposta, mas depende de aprovação formal, designação dos três responsáveis e simulado antes de produção.
-- Faltam teste E2E de navegador, observabilidade/alertas, runbooks específicos de cada provedor/produção, pentest externo e revisão jurídica/regulatória/fiscal.
+- Faltam teste E2E de navegador, provisionamento do Prometheus e scrape por réplica, dashboards/regras de alertas, runbooks específicos de cada provedor/produção, pentest externo e revisão jurídica/regulatória/fiscal.
 - O repositório GitHub continua público. Não inserir credenciais, MIDs, webhook secrets, certificados ou dados reais. O issue #13 registra a ação do proprietário para mudar a visibilidade para Private antes da homologação.
 
 ## Próximas etapas
@@ -87,7 +94,7 @@ O pipeline inclui instalação, Prisma, lint, testes unitários, migrações em 
 4. Conectar o cliente v3 ou o fluxo Foxbit Partner homologado ao motor de pagamentos; manter feature flags desabilitadas até sandbox aprovado.
 5. Construir onboarding e checkout dinâmicos para os campos requeridos pelo provedor.
 6. Homologar payin, conversão, merchant payout 98%, platform payout 2%, webhooks, retries, timeouts, falhas parciais, refunds e reconciliação.
-7. Concluir E2E de navegador, observabilidade/alertas, runbooks, processo multi-pessoa de break-glass, pentest externo e revisão jurídica/regulatória/fiscal.
+7. Concluir E2E de navegador, provisionar Prometheus por réplica, dashboards/alertas, runbooks específicos, processo multi-pessoa de break-glass, pentest externo e revisão jurídica/regulatória/fiscal.
 8. Liberar produção somente após confirmação independente dos dois payouts, ledger balanceado e reconciliação do saldo do provedor.
 
 ## Política operacional
