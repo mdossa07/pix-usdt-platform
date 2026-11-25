@@ -16,7 +16,7 @@ test('renders request counters, cumulative duration buckets and process gauges',
   metrics.observe({ method: 'POST', route: '/v1/payments/:paymentId', status: 401, durationSeconds: 0.2 });
   metrics.observe({ method: 'GET', route: '/health', status: 200, durationSeconds: 0.02 });
 
-  const output = metrics.render(12.5, { rss: 1000, heapUsed: 500 } as NodeJS.MemoryUsage);
+  const output = metrics.render(12.5, { rss: 1000, heapUsed: 500 });
   assert.match(output, /pixsplit_http_requests_total\{method="GET",route="\/health",status="200"\} 2/);
   assert.match(output, /pixsplit_http_request_duration_seconds_bucket\{method="GET",route="\/health",status="200",le="0.005"\} 1/);
   assert.match(output, /pixsplit_http_request_duration_seconds_bucket\{method="GET",route="\/health",status="200",le="\+Inf"\} 2/);
@@ -30,7 +30,7 @@ test('normalizes unknown methods and excludes invalid observations', () => {
   const metrics = createHttpMetrics();
   metrics.observe({ method: 'CUSTOM', route: '/health', status: 700, durationSeconds: 1 });
   metrics.observe({ method: 'GET', route: '/health', status: 200, durationSeconds: -1 });
-  const output = metrics.render(1, { rss: 1, heapUsed: 1 } as NodeJS.MemoryUsage);
+  const output = metrics.render(1, { rss: 1, heapUsed: 1 });
   assert.match(output, /method="OTHER",route="\/health",status="0"/);
   assert.doesNotMatch(output, /method="GET",route="\/health",status="200"/);
 });
@@ -38,6 +38,6 @@ test('normalizes unknown methods and excludes invalid observations', () => {
 test('escapes route labels safely instead of breaking exposition format', () => {
   const metrics = createHttpMetrics();
   metrics.observe({ method: 'GET', route: '/v1/items/"quoted"\\segment', status: 200, durationSeconds: 0.1 });
-  const output = metrics.render(1, { rss: 1, heapUsed: 1 } as NodeJS.MemoryUsage);
+  const output = metrics.render(1, { rss: 1, heapUsed: 1 });
   assert.match(output, /route="\/v1\/items\/\\\"quoted\\\"\\\\segment"/);
 });
