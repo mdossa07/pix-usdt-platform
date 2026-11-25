@@ -46,6 +46,8 @@ jobs:
       - run: cp .env.example .env
       - run: pnpm db:generate
       - run: pnpm lint
+      - name: Check Chromium E2E script syntax
+        run: node --check apps/api/scripts/browser-auth-e2e.mjs
       - run: pnpm test
       - name: Prepare integration database
         run: pnpm --filter @pixsplit/api exec prisma db push --schema prisma/schema.prisma
