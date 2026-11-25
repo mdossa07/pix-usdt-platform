@@ -14,7 +14,8 @@
     "db:generate": "pnpm --filter @pixsplit/api db:generate",
     "db:migrate": "pnpm --filter @pixsplit/api db:migrate",
     "db:migrate:dev": "pnpm --filter @pixsplit/api db:migrate:dev",
-    "db:studio": "pnpm --filter @pixsplit/api db:studio"
+    "db:studio": "pnpm --filter @pixsplit/api db:studio",
+    "audit:dependencies": "pnpm audit --audit-level high"
   },
   "pnpm": {
     "overrides": {
