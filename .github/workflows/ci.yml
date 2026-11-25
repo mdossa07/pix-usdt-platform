@@ -41,7 +41,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - name: Install dependencies from the committed lockfile
+        run: pnpm install --frozen-lockfile
+      - name: Audit dependency vulnerabilities
+        run: pnpm audit --audit-level high
       - run: cp .env.example .env
       - name: Generate ephemeral CI secrets
         shell: bash
