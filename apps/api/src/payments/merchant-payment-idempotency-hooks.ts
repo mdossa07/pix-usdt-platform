@@ -54,9 +54,9 @@ export function createMerchantPaymentIdempotencyHooks(
       externalId: body.externalId,
       amountBrlCents: body.amountBrlCents,
       walletDestinationId: body.walletDestinationId,
-      payerName: typeof body.payerName === 'string' ? body.payerName.trim() || undefined : undefined,
-      payerTaxId: typeof body.payerTaxId === 'string' ? body.payerTaxId.trim() || undefined : undefined,
-      description: typeof body.description === 'string' ? body.description.trim() || undefined : undefined,
+      payerName: typeof body.payerName === 'string' ? body.payerName : undefined,
+      payerTaxId: typeof body.payerTaxId === 'string' ? body.payerTaxId : undefined,
+      description: typeof body.description === 'string' ? body.description : undefined,
     };
 
     const existing = await db.payment.findUnique({ where: { externalId: normalized.externalId } });
