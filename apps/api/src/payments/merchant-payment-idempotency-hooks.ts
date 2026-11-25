@@ -35,8 +35,8 @@ function validBodyForFingerprint(body: MerchantPaymentBody): body is MerchantPay
     && typeof body.externalId === 'string'
     && body.externalId.length >= 1
     && body.externalId.length <= 128
-    && (body.payerName === undefined || (typeof body.payerName === 'string' && body.payerName.length <= 200))
-    && (body.payerTaxId === undefined || (typeof body.payerTaxId === 'string' && body.payerTaxId.length <= 64))
+    && (body.payerName === undefined || (typeof body.payerName === 'string' && body.payerName.length >= 1 && body.payerName.length <= 200))
+    && (body.payerTaxId === undefined || (typeof body.payerTaxId === 'string' && body.payerTaxId.length >= 1 && body.payerTaxId.length <= 64))
     && (body.description === undefined || (typeof body.description === 'string' && body.description.length <= 500));
 }
 
