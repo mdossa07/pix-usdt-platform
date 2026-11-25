@@ -42,6 +42,16 @@ O endpoint `POST /v1/merchant/payments` também aceita uma referência idempoten
 
 A implementação é fail-closed e não habilita integração sandbox/live. O adapter continua sujeito à homologação e às aprovações registradas no gate regulatório.
 
+## Fila administrativa de reservas ambíguas
+
+- Reservas HMAC do endpoint de comerciantes gravam, além do fingerprint, somente os metadados operacionais mínimos: ID do comerciante, valor em centavos e ID interno da carteira. CPF, nome e outros dados do pagador não são duplicados nesses campos.
+- O superadministrador encontra em **Conciliação** as reservas sem resposta persistida que tenham mais de dois minutos. Reservas recentes continuam fora da fila para evitar alertas durante o processamento normal.
+- Reservas criadas antes desta migração podem aparecer sem comerciante/valor, pois esses metadados não existiam quando foram gravadas.
+- A ação **Registrar revisão** grava nota, data, responsável e evento de auditoria. A nota deve conter apenas o que foi conferido e a referência/status não sensível do portal do provedor; nunca inclua CPF, credenciais, tokens ou segredos.
+- Registrar uma revisão **não conclui, apaga, expira nem libera** a reserva. O bloqueio permanece até que uma integração de consulta oficial e homologada consiga provar o estado da cobrança. Não existe retry automático nem botão de desbloqueio nesta fila.
+- A lista é limitada aos 100 registros mais antigos por ciclo; a revisão manual é protegida por autorização `SUPER_ADMIN` e compare-and-set PostgreSQL para evitar registrar uma reserva já concluída.
+
+
 ## Retenção
 
 As chaves atualmente permanecem reservadas enquanto o registro existir no banco; ainda não há rotina de limpeza/expurgo. Portanto, nunca reutilize uma chave antiga. O cliente deve gerar UUID novo para cada nova intenção.
