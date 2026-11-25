@@ -132,7 +132,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - Foxbit Partner exige confirmação específica sobre Fiat Gateway, funding de sub-member, conversão, transferências internas e withdrawals.
 - O onboarding atual não cobre todos os campos dinâmicos KYC/KYB e Travel Rule exigidos pelos corredores.
 - Falta homologar cenários de estorno/devolução PIX, chargeback, falha parcial entre pernas, timeout, webhook perdido, duplicidade e reconciliação real.
-- A stack Prometheus/Grafana está provisionada como overlay local e validada no CI; ainda faltam implantação no ambiente real, scrape de todas as réplicas, firewall/rede e canal de notificação (Alertmanager/receiver).
+- A stack Prometheus/Grafana/Alertmanager está provisionada em overlays locais opcionais e validada no CI; ainda faltam implantação no ambiente real, scrape de todas as réplicas, firewall/rede e configuração do endpoint HTTPS real do receiver com confirmação de notificação recebida.
 - O runbook de break-glass 2-de-3 é uma proposta: faltam aprovação formal, responsáveis nomeados e simulado.
 - Faltam pentest externo e revisão jurídica, regulatória, fiscal e de LGPD.
 - **O repositório GitHub continua público** e a branch master está sem proteção obrigatória. O issue #13 registra a ação do proprietário para torná-lo Private antes de adicionar credenciais. Não colocar segredos, MIDs, certificados ou dados reais no repositório.
@@ -169,7 +169,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 
 **Progresso global estimado: 77%.**
 
-O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, Alertmanager/receivers, pentest externo e revisão jurídica/regulatória/fiscal.
+O produto permanece em modo mock. O retry de webhook não habilita pagamentos reais. Permanecem bloqueios de autorização/contratos e credenciais de provedores, implantação de produção, configuração e confirmação do receiver Alertmanager externo real, pentest externo e revisão jurídica/regulatória/fiscal.
 
 
 ## Entrega validada — autenticação administrativa e retry de webhooks — 25/11/2026
