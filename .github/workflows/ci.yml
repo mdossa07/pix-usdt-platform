@@ -35,6 +35,7 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:4000
       REDIS_URL: redis://localhost:6379
       PROMETHEUS_METRICS_TOKEN_FILE: /tmp/pixsplit-prometheus-metrics-token
+      ALERTMANAGER_WEBHOOK_URL_FILE: /tmp/pixsplit-alertmanager-webhook-url
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -60,7 +61,9 @@ jobs:
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
           printf '%s' "$METRICS_BEARER_TOKEN" > "$PROMETHEUS_METRICS_TOKEN_FILE"
           chmod 644 "$PROMETHEUS_METRICS_TOKEN_FILE"
-          docker compose -f docker-compose.observability.yml config --quiet
+          printf '%s' 'https://alerts.pixsplit.invalid/webhook' > "$ALERTMANAGER_WEBHOOK_URL_FILE"
+          chmod 644 "$ALERTMANAGER_WEBHOOK_URL_FILE"
+          docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml config --quiet
           docker run --rm --entrypoint=/bin/promtool \
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             -v "$PROMETHEUS_METRICS_TOKEN_FILE:/run/secrets/prometheus_metrics_token:ro" \
@@ -70,6 +73,11 @@ jobs:
             -v "$PWD/infra/prometheus:/etc/prometheus:ro" \
             prom/prometheus:v3.16.0 \
             check rules /etc/prometheus/alerts.yml
+          docker run --rm --entrypoint=amtool \
+            -v "$PWD/infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+            -v "$ALERTMANAGER_WEBHOOK_URL_FILE:/run/secrets/alertmanager_webhook_url:ro" \
+            prom/alertmanager:v0.35.1 \
+            check-config /etc/alertmanager/alertmanager.yml
           node -e "JSON.parse(require('node:fs').readFileSync('infra/grafana/dashboards/pixsplit-api.json', 'utf8'))"
       - name: Validate PostgreSQL 18 migration Compose overlay
         env:
@@ -116,7 +124,7 @@ jobs:
             exit 1
           fi
       - name: Start Prometheus and Grafana observability stack
-        run: docker compose -f docker-compose.observability.yml up -d
+        run: docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml up -d
       - name: Verify Prometheus scrape and Grafana provisioning
         run: |
           prometheus_ready=false
@@ -128,7 +136,34 @@ jobs:
             sleep 2
           done
           if [ "$prometheus_ready" != "true" ]; then
-            docker compose -f docker-compose.observability.yml logs
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs
+            exit 1
+          fi
+
+          alertmanager_ready=false
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:9093/-/ready >/dev/null; then
+              alertmanager_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$alertmanager_ready" != "true" ]; then
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs alertmanager
+            exit 1
+          fi
+
+          alertmanager_registered=false
+          for attempt in $(seq 1 30); do
+            active_alertmanagers="$(curl --silent --fail 'http://127.0.0.1:9090/api/v1/alertmanagers' || true)"
+            if node -e "try { const data=JSON.parse(process.argv[1]); process.exit((data.data?.activeAlertmanagers ?? []).some(item => item.url.includes('alertmanager:9093')) ? 0 : 1) } catch { process.exit(1) }" "$active_alertmanagers"; then
+              alertmanager_registered=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$alertmanager_registered" != "true" ]; then
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs
             exit 1
           fi
 
@@ -141,7 +176,7 @@ jobs:
             sleep 2
           done
           if [ "$grafana_ready" != "true" ]; then
-            docker compose -f docker-compose.observability.yml logs
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs
             exit 1
           fi
 
@@ -155,7 +190,7 @@ jobs:
             sleep 2
           done
           if [ "$scrape_ready" != "true" ]; then
-            docker compose -f docker-compose.observability.yml logs
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs
             exit 1
           fi
 
@@ -169,7 +204,7 @@ jobs:
             sleep 2
           done
           if [ "$dashboard_ready" != "true" ]; then
-            docker compose -f docker-compose.observability.yml logs
+            docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml logs
             exit 1
           fi
 
@@ -184,7 +219,9 @@ jobs:
         run: |
           mkdir -p "$(dirname "$PROMETHEUS_METRICS_TOKEN_FILE")"
           touch "$PROMETHEUS_METRICS_TOKEN_FILE"
-          docker compose -f docker-compose.observability.yml down
+          mkdir -p "$(dirname "$ALERTMANAGER_WEBHOOK_URL_FILE")"
+          touch "$ALERTMANAGER_WEBHOOK_URL_FILE"
+          docker compose -f docker-compose.observability.yml -f docker-compose.alertmanager.yml down
       - name: Run Chromium browser authentication E2E
         run: |
           mkdir -p /tmp/pixsplit-playwright
