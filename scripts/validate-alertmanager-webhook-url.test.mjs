@@ -47,7 +47,7 @@ test('reads the URL from a file without returning or printing its contents', () 
   const directory = mkdtempSync(join(tmpdir(), 'pixsplit-alertmanager-'));
   const secretFile = join(directory, 'webhook-url');
   try {
-    writeFileSync(secretFile, 'https://alerts.example.invalid/hook\\n', { mode: 0o600 });
+    writeFileSync(secretFile, 'https://alerts.example.invalid/hook\n', { mode: 0o600 });
     const parsed = validateAlertmanagerWebhookUrlFile(secretFile);
     assert.equal(parsed.hostname, 'alerts.example.invalid');
     assert.throws(
