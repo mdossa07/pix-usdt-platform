@@ -1,0 +1,52 @@
+groups:
+  - name: pixsplit-api
+    interval: 30s
+    rules:
+      - alert: PixSplitApiMetricsUnavailable
+        expr: up{job="pixsplit-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: pixsplit-api
+        annotations:
+          summary: PixSplit API metrics endpoint is unavailable
+          description: Prometheus cannot scrape the authenticated API metrics endpoint for at least two minutes. Check API availability, scrape token synchronization, DNS and host firewall rules.
+
+      - alert: PixSplitApiHighHttp5xxRate
+        expr: |
+          (
+            sum(rate(pixsplit_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(pixsplit_http_requests_total[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: pixsplit-api
+        annotations:
+          summary: PixSplit API HTTP 5xx rate is above 5 percent
+          description: More than five percent of observed API requests returned HTTP 5xx over the last five minutes.
+
+      - alert: PixSplitApiHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(pixsplit_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: pixsplit-api
+        annotations:
+          summary: PixSplit API p95 latency is above one second
+          description: The 95th percentile of observed API request latency exceeded one second for at least five minutes.
+
+      - alert: PixSplitApiProcessRestarted
+        expr: changes(pixsplit_process_uptime_seconds[10m]) > 0
+        for: 1m
+        labels:
+          severity: info
+          service: pixsplit-api
+        annotations:
+          summary: PixSplit API process restarted
+          description: The process uptime metric reset during the last ten minutes. Check deployment and crash logs.
