@@ -25,7 +25,8 @@ function validBodyForFingerprint(body: MerchantPaymentBody): body is MerchantPay
   walletDestinationId: string;
   externalId: string;
 } {
-  return typeof body.amountBrlCents === 'number'
+  return Object.keys(body).every(key => ['amountBrlCents', 'walletDestinationId', 'externalId', 'payerName', 'payerTaxId', 'description'].includes(key))
+    && typeof body.amountBrlCents === 'number'
     && Number.isSafeInteger(body.amountBrlCents)
     && body.amountBrlCents >= 500
     && body.amountBrlCents <= 10_000_000
