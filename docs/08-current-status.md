@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**72% concluído (entrega de software verificável).** A estimativa anterior era 71% em 24/11. O ajuste para 72% considera a entrega e integração do stack local de observabilidade (Prometheus/Grafana) e o endurecimento adicional do bloqueio SSRF para prefixos IPv6 NAT64 (PRs #20 e #19).
+**73% concluído (entrega de software verificável).** A estimativa anterior era 72% em 25/11. O ajuste para 73% considera também a correção do acesso do superadministrador para autenticação via cookie HttpOnly, validação de papel no servidor e logout com revogação efetiva da sessão, cobertos por E2E Chromium (PR #22).
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -19,6 +19,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Proteção CSRF em mutações autenticadas por cookie.
 - TOTP RFC 6238, códigos de recuperação armazenados como hashes e MFA obrigatório para superadministradores.
 - Sessões persistidas em PostgreSQL, revogação centralizada, logout e encerramento individual/global de sessões.
+- O layout administrativo valida a identidade em `/v1/me` usando o cookie HttpOnly, exige papel `SUPER_ADMIN` e encerra a sessão pelo endpoint de logout; o E2E Chromium do PR #22 cobre login sem bearer token e revogação.
 - Middleware revalida usuário ativo e papel atual no PostgreSQL em rotas autenticadas.
 
 ### Pagamentos e ledger
@@ -59,13 +60,18 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #18 — E2E real em Chromium para autenticação, cookies HttpOnly, CSRF e revogação; integrado.
 - PR #19 — bloqueio explícito de prefixos NAT64 no filtro SSRF; integrado em `3c94594`.
 - PR #20 — stack Prometheus/Grafana, dashboard, alertas e smoke tests; integrado em `761d078`.
+- PR #21 — atualização do status de entrega e dos gates do roadmap; integrado em `b9e91c8`.
+- PR #22 — correção do guard administrativo HttpOnly, redirecionamento por papel e E2E de superadmin; integrado em `f6238f2`.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
 - [CI do PR #19 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45519035765).
 - [CI pós-merge do PR #18 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45518472158).
+- [CI do PR #21 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45624566130).
+- [CI do PR #22 — push, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625231839).
+- [CI do PR #22 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45625264032).
 
-O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build e E2E de navegador. O CI do merge commit #19 deve ser confirmado separadamente; não considerar esse run concluído antes do estado terminal.
+O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium de comerciante e superadministrador. Os dois pipelines do PR #22 terminaram com sucesso. O CI pós-merge do commit `f6238f2` é acompanhado separadamente.
 
 ## Bloqueios — não habilitar dinheiro real
 
