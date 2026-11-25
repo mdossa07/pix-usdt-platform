@@ -37,7 +37,8 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [ ] Tornar o repositório Private e revisar o histórico em busca de segredos/dados reais.
 - [ ] Ativar proteção de branch e exigir CI aprovado antes de merge.
 - [ ] Habilitar Dependency Graph no GitHub e mudar `.github/workflows/dependency-review.yml` de `workflow_dispatch` para `pull_request`.
-- [ ] Preparar backup e procedimento de migração/upgrade de volume PostgreSQL antes de integrar a atualização major da imagem 16→18 (PR #30).
+- [x] Preparação PostgreSQL 16→18: runbook de backup/restore/cutover/rollback, sidecar 18 em volume separado e ensaio lógico automatizado em CI com clusters descartáveis (PR #40).
+- [ ] Planejar e aprovar o cutover dos dados reais para PostgreSQL 18: snapshot e backup verificados, compatibilidade de extensões/roles, restauração ensaiada com os dados do ambiente, janela de manutenção e rollback; só então atualizar o serviço principal (PR #30).
 - [ ] Definir o provedor principal (Foxbit ou TransFi) e obter aprovação comercial escrita para o modelo marketplace.
 - [ ] Confirmar por escrito o payin PIX de terceiros, funding/ownership de saldo, conversão BRL→USDT e os dois payouts independentes.
 - [ ] Receber sandbox, MIDs, permissões, webhooks e limites/tarifas documentados.
