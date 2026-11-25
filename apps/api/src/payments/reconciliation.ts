@@ -113,7 +113,9 @@ export class ReconciliationService {
         recovered++;
       }
 
-      cursorId = batch[batch.length - 1].id;
+      const lastPayment = batch.at(-1);
+      if (!lastPayment) break;
+      cursorId = lastPayment.id;
       if (batch.length < this.batchSize) break;
     }
 
