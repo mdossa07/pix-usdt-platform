@@ -2,7 +2,7 @@
 
 ## Progresso estimado
 
-**79% concluído (entrega de software verificável).** A estimativa anterior era 78% em 25/11. Este avanço amplia o ensaio descartável PostgreSQL 16→18 para validar PK/identity, estado de sequência, FK e integridade referencial, constraints UNIQUE/CHECK, índice, JSONB e precisão de `numeric(28,8)`, usando dump do servidor 16 e restore no 18. A atualização permanece isolada de `pixsplit_pg` e não faz cutover do banco principal (PR #45). Este índice mede implementação de software; não significa que a base real tenha sido migrada nem que o sistema esteja pronto para dinheiro real.
+**80% concluído (entrega de software verificável).** A estimativa anterior era 79% em 25/11. Além do ensaio descartável PostgreSQL 16→18 (PR #45), a PR #47 integrou coordenação distribuída da reconciliação com advisory lock transacional PostgreSQL e lotes limitados a 25 pagamentos; CI e Security passaram. A PR #49 adiciona a validação de duas conexões PostgreSQL reais e ainda aguarda CI. Este índice mede implementação de software; não significa que a base real tenha sido migrada, que o fluxo financeiro esteja autorizado ou que o sistema esteja pronto para dinheiro real.
 
 Este percentual é uma estimativa de planejamento da implementação de software. **Não significa que o sistema esteja homologado, implantado em produção ou autorizado a movimentar dinheiro real.** A operação financeira continua bloqueada por aprovações, credenciais e validações externas.
 
@@ -33,6 +33,7 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - Idempotência transacional: chave por comerciante/endpoint, hash canônico e resposta original persistida.
 - Requisições concorrentes com a mesma chave não criam cobranças duplicadas; corpo divergente recebe HTTP 409.
 - Tentativas e transferências preservadas, tratamento conservador de resultados desconhecidos e reconciliação; não há retry cego de payout ambíguo.
+- Reconciliação distribuída entre réplicas Fastify via advisory lock transacional PostgreSQL, com lote máximo de 25 pagamentos, liberação automática do lock em commit/rollback e enfileiramento paralelo; PR #47 integrada em `cceb16e`. Teste de integração com dois clientes PostgreSQL separados está na PR #49, ainda pendente de CI/merge.
 - Webhooks de entrada com assinatura sobre corpo bruto, fingerprint SHA-256, claim atômico por lease, recuperação e fencing token.
 - Migrações PostgreSQL testadas em schema vazio; migrate deploy separado de migrate dev.
 
@@ -77,6 +78,8 @@ Este percentual é uma estimativa de planejamento da implementação de software
 - PR #37 — criação e reativação de webhooks com limite transacional `SERIALIZABLE`, audit log atômico e testes de concorrência; integrado em `1515002`.
 - PR #38 — `pnpm/action-setup` atualizado para `v6`; integrado em `cf3a616`.
 - PR #40 — runbook PostgreSQL 16→18, sidecar isolado com volume novo e ensaio lógico automatizado em CI; integrado em `5b6600b`.
+- PR #47 — advisory lock transacional para coordenação da reconciliação entre réplicas, lotes limitados e teste unitário; integrada em `cceb16e` após CI e Security aprovados.
+- PR #49 — teste E2E com dois clientes Prisma/PostgreSQL reais em schema isolado e etapa própria no CI; aberta, aguardando validação.
 
 Evidências:
 - [CI pós-merge do PR #20 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45623673089).
@@ -94,6 +97,8 @@ Evidências:
 - [CI PR #40 — push, sucesso com ensaio 16→18](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45636981635).
 - [CI PR #40 — pull request, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45637080866).
 - [Security PR #40 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45637080961).
+- [CI PR #47 — sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45646235215).
+- [Security PR #47 — Gitleaks e CodeQL, sucesso](https://github.com/mdossa07/pix-usdt-platform/actions/runs/45646235047).
 
 O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, integrações PostgreSQL, migrações em schema vazio, testes financeiros, idempotência, HMAC, webhooks, MFA, sessões, build, smoke tests de observabilidade e E2E Chromium para comerciante e superadministrador.
 
@@ -110,6 +115,7 @@ O CI executa instalação, geração Prisma, lint/typecheck, testes unitários, 
 - O runbook de break-glass 2-de-3 é uma proposta: faltam aprovação formal, responsáveis nomeados e simulado.
 - Faltam pentest externo e revisão jurídica, regulatória, fiscal e de LGPD.
 - **O repositório GitHub continua público** e a branch master está sem proteção obrigatória. O issue #13 registra a ação do proprietário para torná-lo Private antes de adicionar credenciais. Não colocar segredos, MIDs, certificados ou dados reais no repositório.
+- **Gate regulatório brasileiro aberto:** a Lei 14.478/2022 (arts. 2º e 5º), Resolução BCB 520/2025 (art. 91, com redação da Res. 589/2026, vigente desde 06/11/2026) e Resolução BCB 521/2025 (art. 76-A, § 3º) exigem análise formal do papel da PixSplit, da contraparte autorizada e da movimentação de recursos de terceiros no split 98%/2%. O risco e as perguntas para o parecer estão em `docs/12-brazil-crypto-regulatory-gates.md`. Nenhuma autorização de provedor pode ser presumida pela marca, API ou protocolo de pedido.
 
 ## Próximas etapas, em ordem
 
