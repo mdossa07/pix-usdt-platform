@@ -144,7 +144,7 @@ test('review note screening rejects common PII and credential formats', () => {
     'Counterparty CNPJ: 12.345.678/0001-90 was checked.',
     'Provider contact phone (11) 91234-5678 confirmed the case.',
     'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456',
-    'API key: psk_0123456789abcdef0123456789abcdef',
+    'Provider log included psk_test_test_test_test.',
     '-----BEGIN RSA PRIVATE KEY-----',
   ];
   for (const note of unsafeNotes) {
