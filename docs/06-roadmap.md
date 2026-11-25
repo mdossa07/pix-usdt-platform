@@ -30,6 +30,7 @@ Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o st
 - [x] Prometheus atualizado para `v3.16.0` e Grafana para `13.3.1`, com smoke tests de scrape/provisioning (PRs #29 e #31).
 - [x] GitHub Actions `checkout` e `setup-node` atualizadas para `v7`; `pnpm/action-setup` atualizado para `v6` (PRs #32, #33 e #38).
 - [x] Workflow Dependency Review preparado; sua ativação automática aguarda o proprietário habilitar Dependency Graph nas configurações do GitHub (PR #28).
+- [x] Reconciliação de payout `SUBMITTED` ambíguo após 30 minutos, consulta pela referência original, single-flight local, deduplicação e testes de fila (PR #43).
 - [x] Runbook operacional inicial.
 
 ## Próxima etapa — Governança e preparação de homologação
