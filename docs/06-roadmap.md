@@ -1,6 +1,6 @@
 # 06 — Roadmap de entrega PixSplit
 
-Atualizado em 25/11/2026. Consulte também `docs/08-current-status.md` para o status detalhado e os bloqueios de produção.
+Atualizado em 25/11/2026. A verificação pós-merge do commit `d1416f23c7c45e9599c19a7ba8c92bc97c4f8fde` foi concluída: CI principal, Gitleaks e CodeQL passaram; o job principal incluiu testes unitários, lint/typecheck, integrações PostgreSQL, E2E Chromium e build de produção. Consulte também `docs/08-current-status.md` para o status detalhado e os bloqueios de produção.
 
 ## 0.2.x — Fundação SaaS e protótipo verificável
 
